@@ -305,9 +305,14 @@ void Player::preCollision(bool pressed) {
 	if (button != pressed) {
 		button = pressed;
 		jumpBuffered = pressed;
-		// (releaseButton: the robot stops holding its jump)
-		if (!pressed)
+		// (releaseButton: the robot stops holding its jump, a dash stops: stopDashing, y velocity 0 from the dash)
+		if (!pressed) {
 			robotReleased = true;
+			if (dashing) {
+				dashing = false;
+				velocity = 0;
+			}
+		}
 		input = button;
 		buffer = button;
 		if (pressed)
@@ -941,6 +946,13 @@ void Player::postCollision() {
 		}
 	}
 	vehicle.update(*this);
+	// PlayerObject::update while dashing: m_yVelocity 0, the move tan(angle) times the x step (any mode, never doubled)
+	if (dashing) {
+		acceleration = 0;
+		velocity = dashSlope * player_speeds[speed] * (upsideDown ? -1 : 1);
+		velocityOverride = true;
+		grounded = false;
+	}
 
 	// A ufo jumping as it walks off a block (or a mini ufo, which starts above the floor, pressed on the
 	// level's first frame) still takes GD's walk-off step: GD walks off one step and jumps on the next (once: off a slope

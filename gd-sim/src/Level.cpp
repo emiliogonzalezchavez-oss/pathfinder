@@ -126,7 +126,7 @@ Level::Level(std::string const& lvlString) {
 		{
 			static std::unordered_map<int, char const*> const names = {
 				
-				{1704, "green dash orb"}, {1751, "pink dash orb"}, 
+				
 {2902, "teleport portal"}, {2064, "teleport orb"},
 {1814, "follow player Y trigger"},
 				{3016, "advanced follow trigger"}, {3006, "area move trigger"}, {3007, "area rotate trigger"},

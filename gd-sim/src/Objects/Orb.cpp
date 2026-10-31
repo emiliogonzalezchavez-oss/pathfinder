@@ -1,4 +1,6 @@
 #include <cstdlib>
+#include <cmath>
+#include <algorithm>
 #include <Orb.hpp>
 #include <Player.hpp>
 #include <Level.hpp>
@@ -30,10 +32,32 @@ Orb::Orb(Vec2D size, std::unordered_map<int, std::string>&& fields) : EffectObje
 		case 3004:
 			type = OrbType::Spider;
 			break;
+		case 1704:
+			type = OrbType::Dash;
+			break;
+		case 1751:
+			type = OrbType::GravityDash;
+			break;
 		default:
 			type = OrbType::Yellow;
 			break;
 	};
+	{
+		// startDashing: angle = -rotation (+180 flipped in x), into (-180, 180], mirrored into [-90, 90], capped at 70
+		float a = -(float)stod_def(fields[6]);
+		if (atoi(fields[4].c_str()) == 1)
+			a += 180;
+		a = std::fmod(a, 360.f);
+		if (a > 180) a -= 360;
+		else if (a < -180) a += 360;
+		if (std::abs(a) > 90) {
+			a = (a > 0 ? 180.f : -180.f) - a;
+		}
+		a = std::clamp(a, -70.f, 70.f);
+		float rad = a * 0.017453292f;
+		float c = std::cos(rad), s = std::sin(rad);
+		dashSlope = (double)(s / std::abs(c));
+	}
 	bool flipY = atoi(fields[5].c_str()) == 1;
 	int rot = (int)stod_def(fields[6]);
 	if (rot % 90 != 0)
@@ -159,6 +183,14 @@ void Orb::collide(Player& p) const {
 		if (type == OrbType::Toggle) {
 			if (toggleGroup)
 				p.toggleEvents.push_back({p.frame, toggleGroup});
+			return;
+		}
+		if (type == OrbType::Dash || type == OrbType::GravityDash) {
+			if (type == OrbType::GravityDash)
+				p.flipGravity(!p.upsideDown);
+			p.dashing = true;
+			p.dashSlope = dashSlope;
+			p.velocity = 0;
 			return;
 		}
 		if (type == OrbType::Spider) {

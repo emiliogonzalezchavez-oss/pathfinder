@@ -285,6 +285,9 @@ struct Player : public Entity {
 	/// The robot's hold: GD's 0x99c (set by a release, cleared by a jump) and 0x830, the jump's boost time so far
 	/// (updateJump boosts while it is below 1.5)
 	bool robotReleased = false;
+	/// Dashing (a dash orb's startDashing until the button is let go): y moves tan(angle) times the x step, no gravity
+	bool dashing = false;
+	double dashSlope = 0;
 	double robotBoost = 1.5;
 
 	/// A cube or a robot: the same ground mode (bounds, landing, walk-off) apart from the jump and rotation
