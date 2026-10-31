@@ -93,7 +93,7 @@ bool const slopeDebug = std::getenv("PF_SLOPE") != nullptr;
 
 bool isFly(Player const& p) {
 	auto t = p.vehicle.type;
-	return t == VehicleType::Ship || t == VehicleType::Ufo || t == VehicleType::Wave;
+	return t == VehicleType::Ship || t == VehicleType::Ufo || t == VehicleType::Wave || t == VehicleType::Swing;
 }
 
 /// GD's m_jumpBuffered during this frame's collisions: the button as of the last frame (GD handles a

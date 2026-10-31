@@ -1,6 +1,7 @@
 #include <cstdlib>
 #include <Orb.hpp>
 #include <Player.hpp>
+#include <Level.hpp>
 
 Orb::Orb(Vec2D size, std::unordered_map<int, std::string>&& fields) : EffectObject(size, std::move(fields)) {
 	switch (std::stoi(fields[1])) {
@@ -26,10 +27,19 @@ Orb::Orb(Vec2D size, std::unordered_map<int, std::string>&& fields) : EffectObje
 		case 1022:
 			type = OrbType::Green;
 			break;
+		case 3004:
+			type = OrbType::Spider;
+			break;
 		default:
 			type = OrbType::Yellow;
 			break;
 	};
+	bool flipY = atoi(fields[5].c_str()) == 1;
+	int rot = (int)stod_def(fields[6]);
+	if (rot % 90 != 0)
+		facingDown = ((rot >= 91 && rot <= 269) || (rot >= -269 && rot <= -91)) != flipY;
+	else
+		facingDown = (std::abs(rot) == 180) != flipY;
 }
 
 bool Orb::touching(Player const& p) const {
@@ -149,6 +159,13 @@ void Orb::collide(Player& p) const {
 		if (type == OrbType::Toggle) {
 			if (toggleGroup)
 				p.toggleEvents.push_back({p.frame, toggleGroup});
+			return;
+		}
+		if (type == OrbType::Spider) {
+			// PlayerObject::ringJump (type 43): the gravity the orb faces away from, then spiderTestJump
+			if (p.upsideDown != facingDown)
+				p.flipGravity(facingDown);
+			p.level->spiderJump(p);
 			return;
 		}
 

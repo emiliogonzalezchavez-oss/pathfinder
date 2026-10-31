@@ -34,7 +34,7 @@ void Player::applyResize() {
 }
 
 std::string Player::modeString() const {
-	std::string mode(1, "csbuwr"[(int)vehicle.type]);
+	std::string mode(1, "csbuwrpi"[(int)vehicle.type]);
 	if (upsideDown) mode += 'u';
 	if (small) mode += 'm';
 	if (grounded) mode += 'g';
@@ -53,7 +53,7 @@ Player const* Player::nextPlayer() const {
 /// otherwise (which outside dual mode means no ground)
 static float groundHeight(VehicleType t) {
 	switch (t) {
-		case VehicleType::Ship: case VehicleType::Ufo: case VehicleType::Wave: return 300;
+		case VehicleType::Ship: case VehicleType::Ufo: case VehicleType::Wave: case VehicleType::Swing: return 300;
 		case VehicleType::Ball: return 240;
 		default: return 270;
 	}
@@ -125,7 +125,7 @@ void Player::copyAttributes(Player const& other) {
 	// ...through the mode toggles (toggleFlyMode etc.), with their rotation effects (see VehiclePortal::collide),
 	// and updateTimeMod, which restarts a ball's roll
 	VehicleType from = own.vehicle.type, to = vehicle.type;
-	auto flies = [](VehicleType t) { return t == VehicleType::Ship || t == VehicleType::Ufo || t == VehicleType::Wave; };
+	auto flies = [](VehicleType t) { return t == VehicleType::Ship || t == VehicleType::Ufo || t == VehicleType::Wave || t == VehicleType::Swing; };
 	// (all before togglePlayerScale: the spins they start are for the player's own size)
 	bool newSmall = small;
 	small = own.small;
@@ -169,7 +169,7 @@ void Player::resetObject() {
 void Player::endAccelerating() {
 	// PlayerObject::updateJump first ends m_isAccelerating for a ship, ufo or wave whose velocity is
 	// within the ship's caps: [0, 8) up or (-6.4, 0] down (/ 0.85 when mini)
-	if (vehicle.type == VehicleType::Ship || vehicle.type == VehicleType::Ufo || vehicle.type == VehicleType::Wave) {
+	if (vehicle.type == VehicleType::Ship || vehicle.type == VehicleType::Ufo || vehicle.type == VehicleType::Wave || vehicle.type == VehicleType::Swing) {
 		float size = small ? 0.85f : 1;
 		double v = velocity / 54;
 		if ((v >= 0 && v < (double)(8.0f / size)) || (v <= 0 && v > (double)(-6.4f / size)))
@@ -376,7 +376,7 @@ void Player::preCollision(bool pressed) {
 			hitGroundRotation();
 		// A falling ship or ufo: hitGround stops it before the collisions (a slope it rides below the floor then
 		// clamps that, see Slope::collide)
-		if ((vehicle.type == VehicleType::Ship || vehicle.type == VehicleType::Ufo) && velocity < 0)
+		if (shipLike() && velocity < 0)
 			velocity = 0;
 	}
 
@@ -421,7 +421,7 @@ void Player::preCollision(bool pressed) {
 	// gravity of the next step), so portals touched this frame start from there
 	// A ball too (whatever its velocity: one standing on a block that reaches over the ceiling is put under it, and
 	// the block puts it back on top; the ball's clamp handles one rising into the ceiling)
-	ceilingSnapped = (vehicle.type == VehicleType::Ship || vehicle.type == VehicleType::Ufo || vehicle.type == VehicleType::Ball)
+	ceilingSnapped = (shipLike() || vehicle.type == VehicleType::Ball)
 		&& gravTop(*this) > gravCeiling() && !pastBounds;
 	if (ceilingSnapped) {
 		pos.y = grav(gravCeiling()) - grav(size.y / 2);

@@ -142,7 +142,7 @@ void Block::collideBlock(Player& p, bool bare) const {
 	// (collidedWithObjectInternal) allows 10 (6 for ship/ufo), plus however far the player fell this
 	// frame, plus on a slope the extra half height its angle gives the player.
 	double slopeClip = p.slope.was ? p.slope.clipExtra : 0;
-	double landClip = (p.vehicle.type == VehicleType::Ufo || p.vehicle.type == VehicleType::Ship) ? 6 : 10;
+	double landClip = p.shipLike() ? 6 : 10;
 	landClip += slopeClip + std::max(0.0, -(double)p.grav(p.pos.y - p.prevPlayer().pos.y));
 
 	// A block a trigger moved towards the player's feet this step (up, or down for an upside-down player):
@@ -184,7 +184,7 @@ void Block::collideBlock(Player& p, bool bare) const {
 					p.upsideDown = !prev.upsideDown;
 				}
 			}
-		} else if ((p.vehicle.type == VehicleType::Ball || p.vehicle.type == VehicleType::Ship || p.vehicle.type == VehicleType::Ufo)
+		} else if ((p.vehicle.type == VehicleType::Ball || p.shipLike())
 			&& prev.velocity >= 0 && prev.gravBottom(*this) < prev.gravTop(p)
 			&& prev.gravTop(p) - prev.gravBottom(*this) <= (p.vehicle.type == VehicleType::Ball ? 10 : 6)) {
 			// ...or still stops its head (a ball, ship or ufo), see the head hits below
@@ -267,7 +267,7 @@ void Block::collideBlock(Player& p, bool bare) const {
 
 	// A ship, ufo or ball within the landing or head-hit distance of the block (GD's landing and head branches)
 	// lands, stops its head or nothing; GD never tests its inner hitbox there
-	bool headCapable = p.vehicle.type == VehicleType::Ship || p.vehicle.type == VehicleType::Ufo || p.vehicle.type == VehicleType::Ball;
+	bool headCapable = p.shipLike() || p.vehicle.type == VehicleType::Ball;
 	double headClip = (p.vehicle.type == VehicleType::Ball ? 10 : 6) + slopeClip + std::max(0.0, (double)p.grav(p.pos.y - p.prevPlayer().pos.y));
 	bool landRange = p.gravTop(*this) - bottom <= landClip;
 	bool headRange = headCapable && p.gravTop(p) - p.gravBottom(*this) <= headClip;
@@ -284,7 +284,7 @@ void Block::collideBlock(Player& p, bool bare) const {
 		// side from its (new) floor and grounds it there (hitGround: velocity 0, on ground if slow enough), if the
 		// block is on its head side: its bottom at least the landing clip above the player's (before or after
 		// this frame's move)
-		double clip = (p.vehicle.type == VehicleType::Ufo || p.vehicle.type == VehicleType::Ship) ? 6 : 10;
+		double clip = p.shipLike() ? 6 : 10;
 		double rise = p.grav(p.pos.y - p.prevPlayer().pos.y);
 		bool headSide = p.gravBottom(*this) >= std::min(bottom + clip, bottom + clip - rise);
 		if (headSide && p.lastFlipFrame > 0 && stepsWithin(p.frame - p.lastFlipFrame, 0.1) && (p.vehicle.type != VehicleType::Wave || p.dSlide)) {
@@ -343,7 +343,7 @@ void Block::collideBlock(Player& p, bool bare) const {
 		// (rising, or a slope covers the top), the block does nothing, not even a head hit)
 		// Ship and ufo can hit the ceiling of a block without dying
 		// Same tolerance as landing: 10 (6 for ship/ufo) plus how far the player rose this frame
-		if (p.vehicle.type == VehicleType::Ship || p.vehicle.type == VehicleType::Ufo || p.vehicle.type == VehicleType::Ball) {
+		if (p.shipLike() || p.vehicle.type == VehicleType::Ball) {
 			// GD checks velocity >= 0: 0 counts when another block's head hit or a landing zeroed it this
 			// frame, or for a grounded ship, ufo or ball that a gravity portal flipped in place (GD resolved the block before the portal), but not for a player
 			// walking off (GD has already applied that step's gravity)

@@ -1,5 +1,6 @@
 #include <Vehicle.hpp>
 #include <Player.hpp>
+#include <Level.hpp>
 #include <Object.hpp>
 #include <climits>
 #include <algorithm>
@@ -142,7 +143,7 @@ Vehicle cube() {
 
 	v.enter = +[](Player& p, VehicleType from) {
 		// GD halves y velocity when the ship, ufo or wave mode is toggled off (or on); not off a ball or robot
-		if (from == VehicleType::Ship || from == VehicleType::Ufo || from == VehicleType::Wave)
+		if (from == VehicleType::Ship || from == VehicleType::Ufo || from == VehicleType::Wave || from == VehicleType::Swing)
 			p.velocity = p.velocity / 2;
 
 		if (from == VehicleType::Ship && p.input)
@@ -171,13 +172,44 @@ Vehicle robot() {
 		// switchToRobotMode turns the other modes off (toggleFlyMode etc. halve the y velocity of a ship, ufo or
 		// wave); toggleRobotMode sets m_robotBoost (0x830) to 1.5, so no boost before its first jump, and the
 		// rotation to 0
-		if (from == VehicleType::Ship || from == VehicleType::Ufo || from == VehicleType::Wave)
+		if (from == VehicleType::Ship || from == VehicleType::Ufo || from == VehicleType::Wave || from == VehicleType::Swing)
 			p.velocity = p.velocity / 2;
 		p.robotBoost = 1.5;
 		p.rotation = 0;
 		p.stopRotation();
 	};
 	v.update = +[](Player& p) { cubeLikeUpdate(p, true); };
+	return v;
+}
+
+Vehicle spider() {
+	Vehicle v = cube();
+	v.type = VehicleType::Spider;
+	v.enter = +[](Player& p, VehicleType from) {
+		// switchToSpiderMode / toggleSpiderMode: the other modes off (a ship, ufo or wave halves the y velocity), the
+		// rotation to 0
+		if (from == VehicleType::Ship || from == VehicleType::Ufo || from == VehicleType::Wave || from == VehicleType::Swing)
+			p.velocity = p.velocity / 2;
+		p.robotBoost = 1.5;
+		p.rotation = 0;
+		p.stopRotation();
+	};
+	v.update = +[](Player& p) {
+		p.acceleration = stepAcceleration(p);
+		// PlayerObject::updateJump: held on the ground, the spider teleports to the other side (spiderTestJump), which
+		// lets go of the button (m_isHolding) until the next press
+		bool held = p.grounded || (p.keptGround && !p.clickedOrb);
+		if (held && p.input && !p.groundCleared && !p.partnerFlipsNext) {
+			bool fresh = !p.prevPlayer().input;
+			p.level->spiderJump(p);
+			p.input = false;
+			p.keptGround = false;
+			p.velocityOverride = !fresh;
+		} else if (p.grounded) {
+			p.setVelocity(0, true);
+		}
+		p.buffer = false;
+	};
 	return v;
 }
 
@@ -215,7 +247,7 @@ Vehicle ship() {
 	v.type = VehicleType::Ship;
 
 	v.enter = +[](Player& p, VehicleType from) {
-		if (from == VehicleType::Ufo || from == VehicleType::Wave)
+		if (from == VehicleType::Ufo || from == VehicleType::Wave || from == VehicleType::Swing)
 			p.velocity = p.velocity / 4.0;
 		else 
 			p.velocity = p.velocity / 2.0;
@@ -401,7 +433,7 @@ Vehicle ufo() {
 		if ((from == VehicleType::Ship || from == VehicleType::Wave) && p.input)
 			p.buffer = true;
 
-		p.velocity = p.velocity / (from == VehicleType::Ship || from == VehicleType::Wave ? 4 : 2);
+		p.velocity = p.velocity / (from == VehicleType::Ship || from == VehicleType::Wave || from == VehicleType::Swing ? 4 : 2);
 	};
 
 	v.clamp = +[](Player& p) {
@@ -513,6 +545,45 @@ Vehicle wave() {
 	return v;
 }
 
+Vehicle swing() {
+	Vehicle v;
+	v.type = VehicleType::Swing;
+	v.enter = +[](Player& p, VehicleType from) {
+		// switchToSwingMode: a ship, ufo or wave toggled off halves the y velocity, toggleSwingMode on halves it again
+		p.velocity = p.velocity / (from == VehicleType::Ship || from == VehicleType::Ufo || from == VehicleType::Wave ? 4 : 2);
+	};
+	v.clamp = +[](Player& p) {
+		p.buffer = false;
+		// updateJump caps a swing at 8 either way (mini too), not while m_isAccelerating
+		if (!p.accelerating)
+			p.velocity = std::clamp(p.velocity, -432.0, 432.0);
+		// (put back under the ceiling like the ship: stopped, then the next step's gravity)
+		if (p.ceilingSnapped && p.upsideDown == p.prevPlayer().upsideDown && p.velocity > 0) {
+			p.setVelocity(0, false);
+			p.velocity = roundVel(stepAcceleration(p) * p.dt, p.upsideDown);
+		}
+	};
+	v.update = +[](Player& p) {
+		p.buffer = false;
+		if (p.grounded)
+			p.setVelocity(0, true);
+		// PlayerObject::updateJump: a press it hasn't used yet (m_jumpBuffered) flips the swing's gravity and keeps 0.8 of
+		// its (world) y velocity, as a float; then the step's gravity (in the new direction)
+		if (p.jumpBuffered && p.input) {
+			p.jumpBuffered = false;
+			float world = (float)(p.velocity / 54 * (p.upsideDown ? -1 : 1));
+			p.flipGravity(!p.upsideDown);
+			p.velocity = (double)(world * 0.8f) * 54 * (p.upsideDown ? -1 : 1);
+			p.velocityOverride = false;
+			p.grounded = false;
+		}
+		p.acceleration = stepAcceleration(p);
+	};
+	v.turn = +[](Player& p) { rotateFly(p, 0.15f); };
+	v.bounds = 300;
+	return v;
+}
+
 Vehicle Vehicle::from(VehicleType v) {
 	switch (v) {
 		case VehicleType::Cube:
@@ -527,6 +598,10 @@ Vehicle Vehicle::from(VehicleType v) {
 			return wave();
 		case VehicleType::Robot:
 			return robot();
+		case VehicleType::Spider:
+			return spider();
+		case VehicleType::Swing:
+			return swing();
 	}
 	// (spider, swing: not simulated yet, see Level's unsupported list)
 	return cube();
@@ -544,10 +619,13 @@ double stepAcceleration(Player const& p) {
 			static float const gravity[] = {0.940199f, 0.958199f, 0.957199f, 0.961199f, 0.961199f};
 			return gdFall(p, gravity[p.speed], 0.9f);
 		}
-		// A ball falls with GD's fixed 0.958199 (not m_gravity), times 0.6
+		// A ball (and the spider) falls with GD's fixed 0.958199 (not m_gravity), times 0.6
+		case VehicleType::Spider:
 		case VehicleType::Ball: return gdFall(p, 0.958199f, 0.6f);
 		case VehicleType::Ship: return shipAcceleration(p);
 		case VehicleType::Ufo: return ufoAcceleration(p);
+		// The swing falls towards its gravity with the flying modes' fixed 0.958199, times 0.4 (0.6 mini)
+		case VehicleType::Swing: return gdFall(p, 0.958199f, p.small ? 0.6f : 0.4f);
 		default: return 0;
 	}
 }

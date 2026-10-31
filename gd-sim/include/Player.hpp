@@ -288,7 +288,9 @@ struct Player : public Entity {
 	double robotBoost = 1.5;
 
 	/// A cube or a robot: the same ground mode (bounds, landing, walk-off) apart from the jump and rotation
-	inline bool cubeLike() const { return vehicle.type == VehicleType::Cube || vehicle.type == VehicleType::Robot; }
+	/// The ship, ufo or swing: the flying modes that land on blocks within 6 and hit their head on them
+	inline bool shipLike() const { return vehicle.type == VehicleType::Ship || vehicle.type == VehicleType::Ufo || vehicle.type == VehicleType::Swing; }
+	inline bool cubeLike() const { return vehicle.type == VehicleType::Cube || vehicle.type == VehicleType::Robot || vehicle.type == VehicleType::Spider; }
 
 	/// A fresh click took an orb off the ground this frame (GD's step still has the player on the ground)
 	bool orbFromGround = false;

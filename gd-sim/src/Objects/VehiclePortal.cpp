@@ -22,6 +22,12 @@ VehiclePortal::VehiclePortal(Vec2D size, std::unordered_map<int, std::string>&& 
 		case 745:
 			type = VehicleType::Robot;
 			break;
+		case 1331:
+			type = VehicleType::Spider;
+			break;
+		case 1933:
+			type = VehicleType::Swing;
+			break;
 		default:
 			type = VehicleType::Cube;
 			break;
@@ -52,7 +58,7 @@ void VehiclePortal::collide(Player& player) const {
 		VehicleType from = player.vehicle.type;
 		// Coyote frames only count from leaving the ground as this vehicle
 		player.coyoteFrames = INT_MAX;
-		auto flies = [](VehicleType t) { return t == VehicleType::Ship || t == VehicleType::Ufo || t == VehicleType::Wave; };
+		auto flies = [](VehicleType t) { return t == VehicleType::Ship || t == VehicleType::Ufo || t == VehicleType::Wave || t == VehicleType::Swing; };
 		// (so does toggleRollMode switching the ball off: its updatePlayerFrame and refresh dirty the rect, which the
 		// blocks then take at the size a size portal set this step, before or after this one)
 		if (flies(from) || flies(type) || from == VehicleType::Ball)
@@ -84,7 +90,7 @@ void VehiclePortal::collide(Player& player) const {
 	// GD's on-ground flag outlives a switch between cube and ball: a player resting on the old mode's floor stays
 	// grounded this frame (and can jump), even if the new mode's floor is lower. Switching a ship, ufo or wave on
 	// or off clears it (toggleFlyMode etc.).
-	auto flying = [](VehicleType t) { return t == VehicleType::Ship || t == VehicleType::Ufo || t == VehicleType::Wave; };
+	auto flying = [](VehicleType t) { return t == VehicleType::Ship || t == VehicleType::Ufo || t == VehicleType::Wave || t == VehicleType::Swing; };
 	bool switchedFly = flying(player.prevPlayer().vehicle.type) != flying(type)
 		|| (flying(type) && player.prevPlayer().vehicle.type != type);
 	if (player.prevPlayer().grounded && player.velocity == 0 && player.gravBottom(player) <= player.gravFloor() && !switchedFly)

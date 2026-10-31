@@ -1,5 +1,6 @@
 #include <Pad.hpp>
 #include <Player.hpp>
+#include <Level.hpp>
 
 Pad::Pad(Vec2D size, std::unordered_map<int, std::string>&& fields) : EffectObject(size, std::move(fields)) {
 	switch (atoi(fields[1].c_str())) {
@@ -14,6 +15,9 @@ Pad::Pad(Vec2D size, std::unordered_map<int, std::string>&& fields) : EffectObje
 			break;
 		case 1332:
 			type = PadType::Red;
+			break;
+		case 3005:
+			type = PadType::Spider;
 			break;
 		default:
 			type = PadType::Yellow;
@@ -92,6 +96,17 @@ const velocity_map<PadType, VehicleType, bool> pad_velocities = {
 };
 
 void Pad::collide(Player& p) const {
+	if (type == PadType::Spider) {
+		// PlayerObject::bumpPlayer (type 44): the gravity the pad faces away from (a pad facing down: upside down), then
+		// spiderTestJumpInternal
+		EffectObject::collide(p);
+		p.hitPad = true;
+		bool facingDown = !flipsToUpsideDown;
+		if (p.upsideDown != facingDown)
+			p.flipGravity(facingDown);
+		p.level->spiderJump(p);
+		return;
+	}
 	if (type == PadType::Blue && p.upsideDown == flipsToUpsideDown)
 		return;
 

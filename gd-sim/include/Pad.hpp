@@ -6,6 +6,7 @@ enum class PadType {
 	Blue,
 	Pink,
 	Red,
+	Spider, // spider pad (3005): teleports the player like a spider's jump, in any mode
 };
 
 struct Pad : public EffectObject {

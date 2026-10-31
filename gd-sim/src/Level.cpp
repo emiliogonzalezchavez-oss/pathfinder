@@ -1,3 +1,4 @@
+#include <Hazard.hpp>
 #include <sstream>
 #include <iomanip>
 #include <Level.hpp>
@@ -124,8 +125,8 @@ Level::Level(std::string const& lvlString) {
 					groupCenters[g] = {Vec2D((float)stod_def(obj[2], 0), ((float)stod_def(obj[3], 0) + 90.f) - 90.f), groups};
 		{
 			static std::unordered_map<int, char const*> const names = {
-				{1331, "spider portal"}, {1933, "swing portal"},
-				{1704, "green dash orb"}, {1751, "pink dash orb"}, {3004, "spider orb"}, {3005, "spider pad"},
+				
+				{1704, "green dash orb"}, {1751, "pink dash orb"}, 
 {2902, "teleport portal"}, {2064, "teleport orb"},
 {1814, "follow player Y trigger"},
 				{3016, "advanced follow trigger"}, {3006, "area move trigger"}, {3007, "area rotate trigger"},
@@ -724,4 +725,127 @@ char const* Level::unsupportedNear(float x0, float x1) const {
 std::pair<float, char const*> const* Level::nextUnsupported(float x) const {
 	auto it = std::upper_bound(unsupported.begin(), unsupported.end(), x, [](float v, auto& a) { return v < a.first; });
 	return it == unsupported.end() ? nullptr : &*it;
+}
+
+void Level::spiderJump(Player& p, bool wide) {
+	// PlayerObject::spiderTestJumpInternal (GD 2.2081), not sideways, not platformer, moving right. The player goes to
+	// the nearest solid (block, slope, breakable block) on its head side whose underside (top, upside down) it can
+	// stand against, a hazard in the 8-wide column above it if that is nearer, or else the mode's bound.
+	bool up = !p.upsideDown;
+	float w = p.size.x, h = p.size.y;
+	float px = p.pos.x, py = p.pos.y;
+	float left = px - w / 2, bottom = py - h / 2, top = py + h / 2;
+
+	// The bounds: a ship, ufo, wave, ball or spider uses the mode's floor and ceiling (getMinPortalY /
+	// getMaxPortalY: the ground the mode shows, else the screen, at least GD's ground); any other mode 3000 around it
+	float lo, hi;
+	bool modeBounds = p.vehicle.type != VehicleType::Cube && p.vehicle.type != VehicleType::Robot;
+	if (!modeBounds) {
+		lo = std::max(0.f, py - 3000);
+		hi = py + 3000;
+	} else if (p.ceiling < 1e6f && (p.dual || p.vehicle.type == VehicleType::Ship || p.vehicle.type == VehicleType::Ufo
+		|| p.vehicle.type == VehicleType::Wave || p.vehicle.type == VehicleType::Ball || p.vehicle.type == VehicleType::Swing)) {
+		lo = p.floor;
+		hi = p.ceiling;
+	} else {
+		// (no ground shown: the screen, 320 high, which the sim doesn't track; centred on the player)
+		lo = std::max(0.f, py - 160);
+		hi = lo + 320;
+	}
+
+	// Search rects: from 2 into the player on its head side to the bound
+	float y0 = up ? top - 2 : lo, y1 = up ? hi : bottom + 2;
+	struct R { float x0, y0, x1, y1; };
+	auto meets = [](R const& a, float ax0, float ay0, float ax1, float ay1) {
+		return !(a.x1 < ax0 || ax1 < a.x0 || a.y1 < ay0 || ay1 < a.y0);
+	};
+	R search = wide ? R {left, y0, left + w + 4, y1} : R {px, y0, px + w / 2 + 1, y1};
+	float col = (p.small ? 0.6f : 1.f) * 8;
+	R column {px - col / 2, y0, px + col / 2, y1};
+
+	std::vector<Object const*> statics, damaging;
+	auto consider = [&](Object const* o) {
+		float ox0 = o->getLeft(), ox1 = o->getRight(), oy0 = o->getBottom(), oy1 = o->getTop();
+		if (o->prio == 1) {
+			if (meets(search, ox0, oy0, ox1, oy1))
+				statics.push_back(o);
+		} else if (dynamic_cast<Hazard const*>(o)) {
+			if (meets(column, ox0, oy0, ox1, oy1))
+				damaging.push_back(o);
+		}
+	};
+	int c0 = std::max(0, (int)((search.x0 - 60) * 0.01f)), c1 = std::min((int)sections.size() - 1, (int)((search.x1 + 60) * 0.01f));
+	for (int c = c0; c <= c1; ++c)
+		for (auto& o : sections[c])
+			consider(o.operator->());
+	for (auto& set : dynamicSets) {
+		if (set.maxX + set.reach < search.x0 - 100 || set.minX - set.reach > search.x1 + 100)
+			continue;
+		updateDynamicSet(set, p.frame);
+		if (!set.enabled)
+			continue;
+		for (int i : set.objects)
+			consider(dynamicObjects[i].operator->());
+	}
+	// (the comparators: int(minY * 10) ascending, upside down int(maxY * 10) descending)
+	auto order = [&](Object const* a, Object const* b) {
+		return up ? (int)(a->getBottom() * 10) < (int)(b->getBottom() * 10) : (int)(a->getTop() * 10) > (int)(b->getTop() * 10);
+	};
+	std::stable_sort(statics.begin(), statics.end(), order);
+	std::stable_sort(damaging.begin(), damaging.end(), order);
+
+	if (statics.empty() && !damaging.empty() && !wide)
+		return spiderJump(p, true);
+
+	float target = 0;
+	bool fromHazard = false;
+	if (statics.empty()) {
+		if (!damaging.empty()) {
+			target = damaging.front()->pos.y;
+			fromHazard = true;
+		}
+	} else {
+		for (size_t i = 0; i < statics.size(); ++i) {
+			Object const* o = statics[i];
+			float cand = up ? o->getBottom() - h / 2 : o->getTop() + h / 2;
+			// (one on the other side of the player's centre, more than 10 away, doesn't count)
+			if (up ? cand < py - 10 : py + 10 < cand)
+				continue;
+			// An object that starts right of the player's centre only counts if the player fits there: no other
+			// of them (shrunk by 2 at the top and bottom) overlaps it
+			if (px < o->getLeft()) {
+				float ry0 = cand - h / 2, ry1 = cand + h / 2;
+				bool blocked = false;
+				for (size_t j = 0; j < statics.size() && !blocked; ++j) {
+					if (j == i)
+						continue;
+					Object const* q = statics[j];
+					R shrunk {q->getLeft(), q->getBottom() + 2, q->getRight(), q->getTop() - 2};
+					blocked = meets(shrunk, left, ry0, left + w, ry1);
+				}
+				if (blocked)
+					continue;
+			}
+			target = cand;
+			break;
+		}
+	}
+	if (target == 0)
+		target = up ? hi - h / 2 : lo + h / 2;
+	if (!fromHazard && !damaging.empty()) {
+		float d = damaging.front()->pos.y;
+		if (up ? target > d : target < d) {
+			if (!wide)
+				return spiderJump(p, true);
+			target = d;
+		}
+	}
+
+	p.pos.y = ((float)(target + 90.f)) - 90.f;
+	p.flipGravity(up);
+	// setYVelocity(+-1): towards the new floor
+	p.velocity = -54;
+	p.grounded = false;
+	p.onGround2 = false;
+	p.input = false;
 }
