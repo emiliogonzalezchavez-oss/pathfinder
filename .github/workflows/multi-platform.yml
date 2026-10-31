@@ -15,6 +15,7 @@ jobs:
         with:
           sdk: given
           combine: true
+          build-config: RelWithDebInfo
 
   package:
     name: Package builds
