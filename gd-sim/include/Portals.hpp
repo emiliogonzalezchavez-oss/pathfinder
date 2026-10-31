@@ -42,3 +42,10 @@ struct SpeedPortal : public EffectObject {
     bool touching(Player const&) const override;
     void collide(Player&) const override;
 };
+
+/// Teleport portal (747): moves the player by its exit portal's y offset (key 54)
+struct TeleportPortal : public EffectObject {
+    float offset;
+    TeleportPortal(Vec2D size, std::unordered_map<int, std::string>&& fields);
+    void collide(Player&) const override;
+};

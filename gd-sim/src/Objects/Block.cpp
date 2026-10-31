@@ -250,7 +250,7 @@ void Block::collideBlock(Player& p, bool bare) const {
 	bool headFirst = p.upsideDown && headCapable && headRange;
 	// The landing branch: GD checks it before the inner hitbox, so a (mini) player that falls far enough into the block
 	// for that to reach it still lands
-	bool lands = p.vehicle.type != VehicleType::Wave && landRange && !headFirst && (padHitBefore || p.velocity <= 0 || p.slope.was)
+	bool lands = (p.vehicle.type != VehicleType::Wave || p.dSlide) && landRange && !headFirst && (padHitBefore || p.velocity <= 0 || p.slope.was)
 		&& !flippedOffGround && !coverFeet;
 
 	if (p.innerHitbox().intersects(*this) && !risingOnto && !inRange && !lands) {
@@ -261,7 +261,7 @@ void Block::collideBlock(Player& p, bool bare) const {
 		double clip = (p.vehicle.type == VehicleType::Ufo || p.vehicle.type == VehicleType::Ship) ? 6 : 10;
 		double rise = p.grav(p.pos.y - p.prevPlayer().pos.y);
 		bool headSide = p.gravBottom(*this) >= std::min(bottom + clip, bottom + clip - rise);
-		if (headSide && p.lastFlipFrame > 0 && stepsWithin(p.frame - p.lastFlipFrame, 0.1) && p.vehicle.type != VehicleType::Wave) {
+		if (headSide && p.lastFlipFrame > 0 && stepsWithin(p.frame - p.lastFlipFrame, 0.1) && (p.vehicle.type != VehicleType::Wave || p.dSlide)) {
 			p.pos.y = gdY(p.grav(p.gravBottom(*this)) - p.grav(p.size.y / 2));
 			if (p.velocity <= 270)
 				p.grounded = true;
@@ -270,7 +270,7 @@ void Block::collideBlock(Player& p, bool bare) const {
 			// (hitGround stops the spin whatever the velocity; GD then clears m_isOnGround2)
 			p.hitGroundRotation();
 			p.onGround2 = false;
-		} else
+		} else if (!(p.vehicle.type == VehicleType::Wave && p.dSlide))
 			p.dead = true;
 	} else if (lands) {
 		p.pos.y = gdY(p.grav(p.gravTop(*this)) + p.grav(p.size.y / 2));

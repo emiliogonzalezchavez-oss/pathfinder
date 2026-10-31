@@ -12,6 +12,11 @@
 #include <Orb.hpp>
 #include <Slope.hpp>
 
+struct DBlock : public Object {
+	DBlock(Vec2D size, std::unordered_map<int, std::string>&& fields) : Object(size, std::move(fields)) { prio = 3; }
+	void collide(Player&) const override {}
+};
+
 
 /// Helper classes and functions to make assigning object IDs easier
 struct range : public std::pair<int, int> {
@@ -128,12 +133,15 @@ std::optional<ObjectContainer> Object::create(std::unordered_map<int, std::strin
 	objs(({ 35 }), Pad, 25, 4)
 	objs(({ 140 }), Pad, 25, 5)
 	objs(({ 67 }), Pad, 25, 6)
-	objs(({ 36, 84, 141, 1022, 1330, 1333 }), Orb, 36, 36)
+	objs(({ 36, 84, 141, 1022, 1330, 1333, 1594 }), Orb, 36, 36)
 
 	objs(({ 12, 13, 47, 111 , 660 }), VehiclePortal, 34, 86)
 	objs(({ 10, 11 }), GravityPortal, 25, 75)
 	objs(({ 286, 287 }), DualPortal, 41, 91)
 
+	objs(({ 747 }), TeleportPortal, 25, 75)
+	// D block: while the player touches one, a wave slides along blocks and slopes instead of dying on them
+	objs(({ 1755 }), DBlock, 30, 30)
 	objs(({ 99, 101 }), SizePortal, 31, 90)
 	objs(({ 45, 46 }), MirrorPortal, 44, 92)
 

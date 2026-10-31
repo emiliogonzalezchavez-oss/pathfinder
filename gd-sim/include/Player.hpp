@@ -130,6 +130,12 @@ struct Player : public Entity {
 	int frame;
 
 	bool dead;
+	/// Touching a D block this frame: a wave slides on blocks and slopes instead of dying
+	bool dSlide = false;
+	/// Toggle orbs this path clicked: (frame, group, negative = off)
+	std::vector<std::pair<int, int>> toggleEvents;
+	/// Touch triggers this path touched: (frame, trigger index)
+	std::vector<std::pair<int, int>> touchEvents;
 	bool grounded;
 
 	/**

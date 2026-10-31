@@ -2,6 +2,8 @@
 #include <Object.hpp>
 #include <Player.hpp>
 #include <vector>
+#include <unordered_map>
+#include <climits>
 
 
 /**
@@ -40,11 +42,85 @@ class Level {
 	/// Per-frame scratch lists for runFrame, kept here so they don't reallocate every frame
 	std::vector<ObjectContainer const*> blocks;
 	std::vector<ObjectContainer const*> hazards;
+	std::vector<ObjectContainer> dynamicScratch;
+
+	/// Triggers that change gameplay: move (901), toggle (1049) and spawn (1268). They fire when player 1's x
+	/// passes theirs (or a spawn trigger's delay after it fired), which doesn't depend on the inputs, so the
+	/// sim records player 1's x per frame and works out every group's offset and on/off state from the frame alone.
+	struct Trigger {
+		int kind = 0; // 0 move, 1 toggle, 2 spawn, 3 rotate, 4 follow
+		double x = 0;
+		bool spawned = false;
+		bool touched = false; // touch triggered: fires when the player touches it, not when passing its x
+		std::vector<int> groups; // the trigger's own groups (what spawn triggers target)
+		int target = 0;
+		double dx = 0, dy = 0;
+		int duration = 0; // frames
+		int easing = 0;
+		float rate = 2;
+		bool lockX = false;
+		double modX = 1;
+		bool on = true;  // toggle: activate group
+		double delay = 0; // spawn: seconds
+		double degrees = 0; // rotate: total clockwise degrees (incl. full turns)
+		int centerGroup = 0; // rotate: group of the object to rotate around (0: each object around itself)
+		bool lockRotation = false; // rotate: objects keep their own rotation
+		double modY = 1; // follow: y multiplier (modX is the x one)
+		mutable int activation = INT_MAX;
+	};
+	std::vector<Trigger> triggers;
+	/// Gameplay objects the sim doesn't model (x, name), sorted by x: where the search is likely to get stuck
+	std::vector<std::pair<float, char const*>> unsupported; // (names are string literals: they outlive the Level)
+	/// The first unsupported object between x0 and x1, or nullptr
+	char const* unsupportedNear(float x0, float x1) const;
+	/// The first unsupported object after x, or nullptr
+	std::pair<float, char const*> const* nextUnsupported(float x) const;
+	std::unordered_map<int, std::vector<int>> movesByGroup, togglesByGroup, spawnersByGroup, rotatesByGroup, followsByGroup;
+	/// The first object of each group (any object, decoration too): where rotate triggers turn around
+	struct GroupCenter { Vec2D pos; std::vector<int> groups; };
+	std::unordered_map<int, GroupCenter> groupCenters;
+	/// Player 1's x at each frame (index = frame), filled as frames are simulated
+	std::vector<double> xAtFrame; // (unused: positions come from gameStates, the current path)
+	/// The frame being stepped and player 1's x in it (not in gameStates yet)
+	int stepFrame = 0;
+	double stepX = 0;
+	/// Player 1's x at a frame of the current path
+	double xOfFrame(int frame) const;
+
+	/// Objects in a moved or toggled group: kept out of `sections` and placed every frame
+	struct DynamicSet {
+		std::vector<int> moveGroups, toggleGroups, rotateGroups;
+		std::vector<int> objects; // indices into dynamicObjects
+		float minX = 1e30f, maxX = -1e30f;
+		double reach = 0;
+		int cacheFrame = -1;
+		double cacheX = -1;
+		size_t cacheToggles = 0; // (the path's x then: another path can be elsewhere at the same frame)
+		Vec2D offset {0, 0};
+		bool enabled = true;
+	};
+	std::vector<ObjectContainer> dynamicObjects;
+	std::vector<Vec2D> dynamicBase;
+	std::vector<float> dynamicBaseRotation;
+	std::vector<DynamicSet> dynamicSets;
+
+	int triggerActivation(int index, int depth = 0) const;
+	Vec2D groupOffset(int group, int frame, int depth = 0) const;
+	bool groupEnabled(int group, int frame) const;
+	/// Groups toggle orbs target, and the toggle orbs the path being stepped has clicked
+	std::unordered_map<int, bool> orbToggleGroups;
+	std::vector<std::pair<int, int>> const* stepToggles = nullptr;
+	std::vector<std::pair<int, int>> const* stepTouches = nullptr;
+	void updateDynamicSet(DynamicSet& set, int frame);
 
  	static constexpr uint32_t sectionSize = 100;
  	/// GD's window width in points (320 high, so 569 is 16:9). Mirror portal sprites move relative to it.
  	float screenWidth = 569;
  	bool debug = false;
+	/// Safety margin (units) the search keeps from hazards, and a wave from blocks: GD's own floats and timing can
+	/// differ from the sim's by a hair, so a path that only just scrapes past something can die in the real game.
+	/// 0 = exact hitboxes (what the final check uses).
+	float margin = 0;
 
  	Level(std::string const& lvlString);
 

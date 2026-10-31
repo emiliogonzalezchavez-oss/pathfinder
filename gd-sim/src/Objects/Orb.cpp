@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <Orb.hpp>
 #include <Player.hpp>
 
@@ -8,6 +9,10 @@ Orb::Orb(Vec2D size, std::unordered_map<int, std::string>&& fields) : EffectObje
 			break;
 		case 84:
 			type = OrbType::Blue;
+			break;
+		case 1594:
+			type = OrbType::Toggle;
+			toggleGroup = std::atoi(fields[51].c_str()) * (fields[56] == "1" ? 1 : -1);
 			break;
 		case 141:
 			type = OrbType::Pink;
@@ -140,6 +145,12 @@ void Orb::collide(Player& p) const {
 		p.onGround2 = false;
 
 		EffectObject::collide(p);
+
+		if (type == OrbType::Toggle) {
+			if (toggleGroup)
+				p.toggleEvents.push_back({p.frame, toggleGroup});
+			return;
+		}
 
 		// Wave can't use non-gravity orbs
 		if (p.vehicle.type != VehicleType::Wave) {

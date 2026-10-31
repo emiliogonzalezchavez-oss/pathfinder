@@ -2,8 +2,12 @@
 #include <iomanip>
 #include <Level.hpp>
 #include <Orb.hpp>
+#include <TouchTrigger.hpp>
 #include <algorithm>
 #include <cstdlib>
+#include <cmath>
+#include <unordered_set>
+#include <tuple>
 
 // Otherwise gameStates copies every Player (instead of moving) whenever it grows
 static_assert(std::is_nothrow_move_constructible_v<Player>);
@@ -52,6 +56,8 @@ Level::Level(std::string const& lvlString) {
 
 	// First player state
 	auto player = Player();
+	std::vector<std::pair<ObjectContainer, std::vector<int>>> pending;
+	std::vector<std::tuple<float, char const*, int>> unsupportedPending;
 
 	while (std::getline(ss, objstr, ';')) {
 		// First entry is level settings object
@@ -82,26 +88,172 @@ Level::Level(std::string const& lvlString) {
 		if (obj.count(2))
 			length = std::max(length, (float)stod_def(obj[2], 0) + 40);
 
-		if (obj[1] == "31") {
+		// Start positions are an editor/practice tool: a normal-mode run (what a macro is played in) starts at the
+		// beginning, so they are ignored unless PF_STARTPOS is set
+		static bool const useStartPos = std::getenv("PF_STARTPOS") != nullptr;
+		if (obj[1] == "31" && useStartPos) {
 			initLevelSettings(objstr, player);
 			player.pos.x = stod_def(obj[2], 0);
 			player.pos.y = stod_def(obj[3], 0);
 		}
+
+		std::vector<int> groups;
+		if (obj.count(57)) {
+			std::stringstream gs(obj[57]);
+			std::string g;
+			while (std::getline(gs, g, '.'))
+				if (int gi = atoi(g.c_str()))
+					groups.push_back(gi);
+		}
+
+		int objId = atoi(obj[1].c_str());
+		if (objId == 1594 && atoi(obj[51].c_str()))
+			orbToggleGroups[atoi(obj[51].c_str())] = true;
+		if (obj.count(2))
+			for (int g : groups)
+				if (!groupCenters.count(g))
+					groupCenters[g] = {Vec2D((float)stod_def(obj[2], 0), ((float)stod_def(obj[3], 0) + 90.f) - 90.f), groups};
+		{
+			static std::unordered_map<int, char const*> const names = {
+				{745, "robot portal"}, {1331, "spider portal"}, {1933, "swing portal"},
+				{1704, "green dash orb"}, {1751, "pink dash orb"}, {3004, "spider orb"}, {3005, "spider pad"},
+{2902, "teleport portal"}, {2064, "teleport orb"},
+{1814, "follow player Y trigger"},
+				{3016, "advanced follow trigger"}, {3006, "area move trigger"}, {3007, "area rotate trigger"},
+				{3008, "area scale trigger"}, {2067, "scale trigger"}, {1932, "player control trigger"},
+				{2066, "gravity trigger"}, {1935, "time warp trigger"}, {3022, "teleport trigger"},
+				{1811, "instant count trigger"}, {1817, "pickup trigger"}, {1611, "count trigger"},
+				{1595, "touch trigger"}, {1812, "on death trigger"}, {2899, "options trigger"},
+			};
+			if (auto it = names.find(objId); it != names.end() && obj.count(2)) {
+				// (triggers only matter when they target a group with gameplay objects: checked below)
+				int target = std::string(it->second).find("trigger") != std::string::npos ? atoi(obj[51].c_str()) : -1;
+				unsupportedPending.push_back({(float)stod_def(obj[2], 0), it->second, target});
+			}
+		}
+		if (objId == 901 || objId == 1049 || objId == 1268 || objId == 1346 || objId == 1347) {
+			Trigger t;
+			t.kind = objId == 901 ? 0 : objId == 1049 ? 1 : objId == 1268 ? 2 : objId == 1346 ? 3 : 4;
+			t.x = stod_def(obj[2], 0);
+			t.spawned = obj[62] == "1";
+			t.touched = obj[11] == "1" && !t.spawned;
+			t.groups = groups;
+			t.target = atoi(obj[51].c_str());
+			if (t.kind == 0) {
+				t.dx = stod_def(obj[28], 0);
+				t.dy = stod_def(obj[29], 0);
+				t.duration = (int)std::lround(stod_def(obj[10], 0) * 240);
+				t.easing = atoi(obj[30].c_str());
+				t.rate = obj.count(85) ? stod_def(obj[85], 2) : 2;
+				t.lockX = obj[58] == "1";
+				t.modX = obj.count(143) ? stod_def(obj[143], 1) : 1;
+				// 2.2 "use target" moves (100) and player-Y locks are left out
+				if (obj[100] == "1") t.dx = t.dy = 0;
+			} else if (t.kind == 4) {
+				// Follow trigger: the target group copies the follow group's movement (times modX / modY) for its duration
+				t.centerGroup = atoi(obj[71].c_str());
+				t.modX = obj.count(72) ? stod_def(obj[72], 1) : 1;
+				t.modY = obj.count(73) ? stod_def(obj[73], 1) : 1;
+				t.duration = (int)std::lround(stod_def(obj[10], 0) * 240);
+			} else if (t.kind == 3) {
+				t.degrees = stod_def(obj[68], 0) + 360.0 * atoi(obj[69].c_str());
+				t.duration = (int)std::lround(stod_def(obj[10], 0) * 240);
+				t.easing = atoi(obj[30].c_str());
+				t.rate = obj.count(85) ? stod_def(obj[85], 2) : 2;
+				t.centerGroup = atoi(obj[71].c_str());
+				t.lockRotation = obj[70] == "1";
+			} else if (t.kind == 1) {
+				t.on = obj[56] == "1";
+			} else {
+				t.delay = stod_def(obj[63], 0);
+			}
+			int index = triggers.size();
+			triggers.push_back(t);
+			if (t.touched) {
+				// The player touching it fires it: an object in the level (30 x 30, GD's trigger box)
+				TouchTrigger tt({30, 30}, {{1, "0"}, {2, obj[2]}, {3, obj[3]}});
+				tt.trigger = index;
+				ObjectContainer c(tt);
+				c->id = objectCount++;
+				pending.push_back({c, groups});
+			}
+			if (t.target) {
+				if (t.kind == 0) movesByGroup[t.target].push_back(index);
+				else if (t.kind == 3) rotatesByGroup[t.target].push_back(index);
+				else if (t.kind == 4) followsByGroup[t.target].push_back(index);
+				else if (t.kind == 1) togglesByGroup[t.target].push_back(index);
+				else spawnersByGroup[t.target].push_back(index);
+			}
+			continue;
+		}
+
+		// "No touch" (121) and passable (134) objects never collide (GameObject::m_isNoTouch / m_isPassable)
+		if (obj[121] == "1" || obj[134] == "1")
+			continue;
+
 
 		if (auto ob_o = Object::create(std::move(obj))) {
 			auto ob = ob_o.value();
 
 			// Unique ID
 			ob->id = objectCount++;
+			pending.push_back({ob, std::move(groups)});
+		}
+	}
 
+	for (auto& [ob, groups] : pending) {
+		std::vector<int> moved, toggled, rotated;
+		for (int g : groups) {
+			if (movesByGroup.count(g) || followsByGroup.count(g)) moved.push_back(g);
+			if (togglesByGroup.count(g) || orbToggleGroups.count(g)) toggled.push_back(g);
+			if (rotatesByGroup.count(g)) rotated.push_back(g);
+		}
+		if (moved.empty() && toggled.empty() && rotated.empty()) {
 			// Sections are divided by x position in increments of 100 (GJBaseGameLayer::addToSection)
 			size_t sectionPos = std::max(0, (int)((double)0.01f * ob->pos.x));
 			if (sectionPos >= sections.size())
 				sections.resize(sectionPos + 1);
 			sections[sectionPos].push_back(ob);
-
+			continue;
 		}
+		DynamicSet* set = nullptr;
+		for (auto& s : dynamicSets)
+			if (s.moveGroups == moved && s.toggleGroups == toggled && s.rotateGroups == rotated) { set = &s; break; }
+		if (!set) {
+			dynamicSets.push_back({});
+			set = &dynamicSets.back();
+			set->moveGroups = moved;
+			set->toggleGroups = toggled;
+			set->rotateGroups = rotated;
+			if (!rotated.empty())
+				set->reach += 600;
+			for (int g : moved) {
+				if (followsByGroup.count(g))
+					set->reach += 900;
+				for (int i : movesByGroup[g]) {
+					auto& t = triggers[i];
+					set->reach += (std::abs(t.dx) + std::abs(t.dy)) * 1.7 + 30;
+					if (t.lockX) set->reach += (t.duration / 240.0 + 0.1) * 1200 * std::abs(t.modX);
+				}
+			}
+		}
+		set->objects.push_back(dynamicObjects.size());
+		set->minX = std::min(set->minX, ob->pos.x);
+		set->maxX = std::max(set->maxX, ob->pos.x);
+		dynamicBase.push_back(ob->pos);
+		dynamicBaseRotation.push_back(ob->rotation);
+		dynamicObjects.push_back(ob);
 	}
+
+	{
+		std::unordered_set<int> gameplayGroups;
+		for (auto& [ob, groups] : pending)
+			gameplayGroups.insert(groups.begin(), groups.end());
+		for (auto& [x, name, target] : unsupportedPending)
+			if (target < 0 || gameplayGroups.count(target))
+				unsupported.push_back({x, name});
+	}
+	std::sort(unsupported.begin(), unsupported.end(), [](auto& a, auto& b) { return a.first < b.first; });
 
 	player.level = this;
 	Player p2 = player;
@@ -363,12 +515,48 @@ int Level::stepPlayer(Player& p, bool pressed, float dt) {
 	bool clicked = p.button && !p.prevPlayer().button;
 	std::vector<Orb const*> clickOrbs;
 
-	for (auto section : sections) {
-		if (section == nullptr) continue;
-		for (auto& o : *section) {
-			if (p.dead) break;
-			if (o->ySection < row - 1 || o->ySection > row + 1)
+	// Moved and toggled groups: placed for this frame (player 1's x so far decides which triggers fired)
+	if (!p.isP2) {
+		stepFrame = p.frame;
+		stepX = p.pos.x;
+		stepToggles = &p.toggleEvents;
+		stepTouches = &p.touchEvents;
+	}
+	std::vector<ObjectContainer*> dynamicNear;
+	for (auto& set : dynamicSets) {
+		if (set.maxX + set.reach < p.pos.x - 250 || set.minX - set.reach > p.pos.x + 250)
+			continue;
+		updateDynamicSet(set, p.frame);
+		if (!set.enabled)
+			continue;
+		for (int i : set.objects) {
+			auto& o = dynamicObjects[i];
+			int c = (int)((float)o->pos.x * 0.01f);
+			if (c < firstColumn || c > lastColumn)
 				continue;
+			dynamicNear.push_back(&o);
+		}
+	}
+
+	// D blocks first: whether the wave may slide this frame
+	p.dSlide = false;
+	auto checkD = [&](ObjectContainer const& o) {
+		if (o->prio == 3 && !p.dSlide && o->ySection >= row - 1 && o->ySection <= row + 1 && o->Object::touching(p))
+			p.dSlide = true;
+	};
+	for (auto section : sections)
+		if (section)
+			for (auto& o : *section)
+				checkD(o);
+	for (auto o : dynamicNear)
+		checkD(*o);
+
+	auto visit = [&](ObjectContainer& o) {
+			if (p.dead) return;
+			if (o->prio == 3)
+				return;
+			if (o->ySection < row - 1 || o->ySection > row + 1)
+				return;
 			if (o->prio == 1)
 				blocks.push_back(&o);
 			else if (o->prio == 2)
@@ -383,7 +571,17 @@ int Level::stepPlayer(Player& p, bool pressed, float dt) {
 				if (p.dead)
 					logDeath(p, *o.operator->());
 			}
+	};
+	for (auto section : sections) {
+		if (section == nullptr) continue;
+		for (auto& o : *section) {
+			if (p.dead) break;
+			visit(o);
 		}
+	}
+	for (auto o : dynamicNear) {
+		if (p.dead) break;
+		visit(*o);
 	}
 
 	if (clickOrbs.size() > 1) {
@@ -439,6 +637,32 @@ int Level::stepPlayer(Player& p, bool pressed, float dt) {
 		}
 	}
 
+	// The search's safety margin: a near miss counts as a death (hazards for every mode, blocks for the wave)
+	if (margin > 0 && !p.dead) {
+		auto grown = [&](ObjectContainer const& o) {
+			ObjectContainer c = o;
+			c->size.x += o->size.x < 0 ? -2 * margin : 2 * margin;
+			c->size.y += o->size.y < 0 ? -2 * margin : 2 * margin;
+			return c;
+		};
+		for (auto hp : hazards) {
+			auto c = grown(*hp);
+			if (c->touching(p)) {
+				p.dead = true;
+				break;
+			}
+		}
+		if (!p.dead && p.vehicle.type == VehicleType::Wave && !p.dSlide) {
+			for (auto bp : blocks) {
+				auto c = grown(*bp);
+				if (c->Object::touching(p)) {
+					p.dead = true;
+					break;
+				}
+			}
+		}
+	}
+
 	if (!p.dead)
 		p.postCollision();
 	else
@@ -479,4 +703,16 @@ Player const& Level::getState(int frame, bool p2) const {
 
 Player& Level::latestState() {
 	return gameStates.back();
+}
+
+char const* Level::unsupportedNear(float x0, float x1) const {
+	auto it = std::lower_bound(unsupported.begin(), unsupported.end(), x0, [](auto& a, float x) { return a.first < x; });
+	if (it != unsupported.end() && it->first <= x1)
+		return it->second;
+	return nullptr;
+}
+
+std::pair<float, char const*> const* Level::nextUnsupported(float x) const {
+	auto it = std::upper_bound(unsupported.begin(), unsupported.end(), x, [](float v, auto& a) { return v < a.first; });
+	return it == unsupported.end() ? nullptr : &*it;
 }

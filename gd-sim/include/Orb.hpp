@@ -8,10 +8,13 @@ enum class OrbType {
 	Red,
 	Green,
 	Black,
+	Toggle, // toggle orb (1594): a click turns its target group on or off, no jump
 };
 
 struct Orb : public EffectObject {
 	OrbType type;
+	/// Toggle orb: its target group, negative to turn it off (0 for other orbs)
+	int toggleGroup = 0;
 
 	Orb(Vec2D size, std::unordered_map<int, std::string>&& fields);
 	bool touching(Player const&) const override;

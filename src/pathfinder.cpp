@@ -6,6 +6,9 @@
 #include <cstdlib>
 #include <gdr/gdr.hpp>
 #include "pathfinder.hpp"
+#include <thread>
+#include <memory>
+#include <chrono>
 
 class Replay2 : public gdr::Replay<Replay2, gdr::Input<"">> {
  public:
@@ -50,7 +53,7 @@ struct Level2 : public Level {
 struct InputSet {
 	std::vector<uint16_t> frames;
 
-	InputSet() { frames.reserve(32); }
+	InputSet() { frames.reserve(128); }
 	bool contains(uint16_t f) const { return std::find(frames.begin(), frames.end(), f) != frames.end(); }
 	void insert(uint16_t f) { if (!contains(f)) frames.push_back(f); }
 	void erase(uint16_t f) {
@@ -206,6 +209,10 @@ int tryInputs(Level2& lvl, InputSet inputs, DeadPaths const& dead, Prefix& prefi
 
 std::vector<uint8_t> pathfind(std::string const& lvlString, std::atomic_bool& stop, std::function<void(double)> callback, uint32_t seed, PathfindStats* stats) {
 	Level2 lvl(lvlString);
+	// Search with a safety margin around hazards; it shrinks at a spot that needs a tighter path
+	constexpr float baseMargin = 2.0f;
+	lvl.margin = baseMargin;
+	int marginSpot = -1;
 
 	std::mt19937 rng(seed ? seed : std::random_device()());
 	std::uniform_int_distribution<int> dist(0, 999);
@@ -228,6 +235,8 @@ std::vector<uint8_t> pathfind(std::string const& lvlString, std::atomic_bool& st
 	// PF_LOG=1: trace the search's dead ends on stderr
 	static bool const trace = std::getenv("PF_LOG") != nullptr;
 
+	int checks = 0;
+search:
 	while (lvl.gameStates.back().pos.x < lvl.length) {
 		auto frame = lvl.currentFrame();
 
@@ -240,9 +249,14 @@ std::vector<uint8_t> pathfind(std::string const& lvlString, std::atomic_bool& st
 		constexpr int iterations = 300; //30
 		for (int i = 0; i < iterations; i++) {
 
+			// Mixed candidates: sparse ones for slow parts, dense short ones for spam and tight waves
+			static constexpr int counts[] = {8, 20, 30, 30, 60, 120};
+			static constexpr int windows[] = {200, 500, 1000, 1000};
+			int count = counts[rng() % 6];
+			int window = windows[rng() % 4];
 			InputSet inputs;
-			for (int i = 0; i < 30; i++) {
-				inputs.insert(frame + dist(rng));
+			for (int i = 0; i < count; i++) {
+				inputs.insert(frame + dist(rng) * window / 1000);
 			}
 
 			int nf = tryInputs(lvl, inputs, dead, prefix);
@@ -258,8 +272,21 @@ std::vector<uint8_t> pathfind(std::string const& lvlString, std::atomic_bool& st
 			lvl.rollback(frame);
 		}
 
-		if (stats)
+		if (stats) {
 			++stats->rounds;
+			stats->frames = lvl.framesRun;
+			stats->length = lvl.length;
+			float bx = std::max<float>(stats->bestX, lvl.latestState().pos.x);
+			stats->bestX = bx;
+			stats->blocker = lvl.unsupportedNear(bx - 150, bx + 450);
+			if (auto next = lvl.nextUnsupported(bx + 450)) {
+				stats->nextBlocker = next->second;
+				stats->nextBlockerX = next->first;
+			} else {
+				stats->nextBlocker = nullptr;
+				stats->nextBlockerX = -1;
+			}
+		}
 		if (bestFrame == frame) {
 			fail += fail > 100 ? 55 : 5;
 			if (fail <= 1000) {
@@ -276,6 +303,11 @@ std::vector<uint8_t> pathfind(std::string const& lvlString, std::atomic_bool& st
 						backoff ? backoff * 2 : 2000, dead.paths.size());
 				}
 				dead.add(local);
+				// Stuck at the same spot again: let the path get closer to things there
+				if (marginSpot == trueBest || marginSpot < 0) {
+					lvl.margin = std::max(0.0f, lvl.margin - 0.75f);
+				}
+				marginSpot = trueBest;
 				backoff = backoff ? backoff * 2 : 2000;
 				dead.window = backoff + 1000;
 				int to = trueBest - backoff;
@@ -312,6 +344,11 @@ std::vector<uint8_t> pathfind(std::string const& lvlString, std::atomic_bool& st
 
 		if (lvl.currentFrame() > trueBest) {
 			trueBest = lvl.currentFrame();
+			// Well past the spot that needed a smaller margin: back to the full one
+			if (lvl.margin < baseMargin && marginSpot >= 0 && trueBest > marginSpot + 600) {
+				lvl.margin = baseMargin;
+				marginSpot = -1;
+			}
 			fail = 0;
 			backoff = 0;
 			dead.window = 3000;
@@ -331,8 +368,40 @@ std::vector<uint8_t> pathfind(std::string const& lvlString, std::atomic_bool& st
 	}
 
 	// A path that reached the end is the one to export, even if a dead end that `best` kept took more frames
-	if (isLevelEnd(lvl))
+	if (isLevelEnd(lvl)) {
 		best.take(lvl);
+		// Final check: play the macro's inputs in a fresh sim with exact hitboxes, as Eclipse will play them.
+		// If it dies, go back before that point and search on from there.
+		int deathFrame = 0;
+		{
+			Level check(lvlString);
+			bool held = false;
+			size_t k = 1;
+			while (!check.latestState().dead && check.latestState().pos.x < check.length) {
+				int f = check.currentFrame() + 1;
+				// (state k is frame k + 1: an input at frame k + 1 when state k's button differs from state k - 1's)
+				while (k < best.button.size() && (int)k + 1 <= f) {
+					held = best.button[k];
+					++k;
+				}
+				check.runFrame(held);
+				if (check.currentFrame() > (int)best.button.size() + 2400)
+					break;
+			}
+			if (check.latestState().dead || check.latestState().pos.x < check.length)
+				deathFrame = std::max(1, check.currentFrame());
+		}
+		if (deathFrame && checks < 5 && !stop) {
+			++checks;
+			lvl.rollback(std::max(1, deathFrame - 600));
+			rolledBack();
+			local.take(lvl);
+			fail = 1;
+			goto search;
+		}
+		if (!deathFrame && stats)
+			stats->complete = true;
+	}
 	if (stats)
 		stats->frames = lvl.framesRun;
 
@@ -344,4 +413,77 @@ std::vector<uint8_t> pathfind(std::string const& lvlString, std::atomic_bool& st
 	}
 
 	return output.exportData().unwrapOr({});
+}
+
+std::vector<uint8_t> pathfindParallel(std::string const& lvlString, std::atomic_bool& stop, std::function<void(double)> callback,
+	PathfindStats* stats, int threads) {
+	if (threads <= 0)
+		threads = std::clamp((int)std::thread::hardware_concurrency() - 1, 1, 8);
+	if (stats)
+		stats->racers = threads;
+
+	std::atomic_bool raceStop = false;
+	std::vector<std::unique_ptr<PathfindStats>> each;
+	std::vector<std::vector<uint8_t>> results(threads);
+	std::vector<std::thread> pool;
+	uint32_t base = std::random_device()();
+	for (int i = 0; i < threads; ++i)
+		each.push_back(std::make_unique<PathfindStats>());
+	std::atomic<int> running = threads;
+	for (int i = 0; i < threads; ++i) {
+		pool.emplace_back([&, i] {
+			try {
+				results[i] = pathfind(lvlString, raceStop, nullptr, base + i * 7919 + 1, each[i].get());
+			} catch (...) {
+			}
+			if (each[i]->complete)
+				raceStop = true;
+			--running;
+		});
+	}
+
+	while (running > 0) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		if (stop)
+			raceStop = true;
+		uint64_t frames = 0, rounds = 0, deadEnds = 0;
+		int lead = 0;
+		for (int i = 0; i < threads; ++i) {
+			frames += each[i]->frames;
+			rounds += each[i]->rounds;
+			deadEnds += each[i]->deadEnds;
+			if (each[i]->bestX > each[lead]->bestX)
+				lead = i;
+		}
+		if (stats) {
+			stats->frames = frames;
+			stats->rounds = rounds;
+			stats->deadEnds = deadEnds;
+			stats->length = each[lead]->length.load();
+			stats->bestX = each[lead]->bestX.load();
+			stats->blocker = each[lead]->blocker.load();
+			stats->nextBlocker = each[lead]->nextBlocker.load();
+			stats->nextBlockerX = each[lead]->nextBlockerX.load();
+		}
+		if (callback && each[lead]->length > 0)
+			callback(std::min(100.0, each[lead]->bestX / (double)each[lead]->length * 100));
+	}
+	for (auto& t : pool)
+		t.join();
+
+	// The winner: a complete one, else the one that got furthest
+	int pick = 0;
+	for (int i = 0; i < threads; ++i) {
+		if (each[i]->complete) {
+			pick = i;
+			break;
+		}
+		if (each[i]->bestX > each[pick]->bestX)
+			pick = i;
+	}
+	if (stats) {
+		stats->complete = each[pick]->complete.load();
+		stats->bestX = each[pick]->bestX.load();
+	}
+	return results[pick];
 }

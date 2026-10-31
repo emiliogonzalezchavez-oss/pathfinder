@@ -296,7 +296,7 @@ void Slope::collide(Player& p) const {
 			p.dead = true;
 		return;
 	}
-	if (hazard || switching || type == VehicleType::Wave) {
+	if (hazard || switching || (type == VehicleType::Wave && !p.dSlide)) {
 		p.dead = true;
 		return;
 	}

@@ -89,8 +89,8 @@ int main(int argc, char** argv) {
 			  << ",\"seconds\":" << seconds
 			  << ",\"timedOut\":" << (stop ? "true" : "false")
 			  << ",\"seed\":" << seed
-			  << ",\"simFrames\":" << stats.frames
-			  << ",\"rounds\":" << stats.rounds
-			  << ",\"deadEnds\":" << stats.deadEnds << "}" << std::endl;
+			  << ",\"simFrames\":" << stats.frames.load()
+			  << ",\"rounds\":" << stats.rounds.load()
+			  << ",\"deadEnds\":" << stats.deadEnds.load() << "}" << std::endl;
 	return 0;
 }
