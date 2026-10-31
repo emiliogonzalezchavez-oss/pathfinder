@@ -1,6 +1,20 @@
+diff -ruN tobi/gd-sim/include/EffectObject.hpp work/gd-sim/include/EffectObject.hpp
+--- a/gd-sim/include/EffectObject.hpp	2026-10-31 05:33:26.477514949 +0000
++++ b/gd-sim/include/EffectObject.hpp	2026-10-31 11:27:48.579153500 +0000
+@@ -11,3 +11,10 @@
+     bool touching(Player const&) const override;
+     void collide(Player&) const override;
+ };
++
++/// A touch-triggered trigger: touching it records the touch on the player (Level::triggerActivation reads it)
++struct TouchTrigger : public EffectObject {
++    int trigger = 0;
++    using EffectObject::EffectObject;
++    void collide(Player&) const override;
++};
 diff -ruN tobi/gd-sim/include/Level.hpp work/gd-sim/include/Level.hpp
 --- a/gd-sim/include/Level.hpp	2026-10-31 05:33:26.477514949 +0000
-+++ b/gd-sim/include/Level.hpp	2026-10-31 10:39:04.340759336 +0000
++++ b/gd-sim/include/Level.hpp	2026-10-31 11:27:48.574809711 +0000
 @@ -2,6 +2,8 @@
  #include <Object.hpp>
  #include <Player.hpp>
@@ -10,7 +24,7 @@ diff -ruN tobi/gd-sim/include/Level.hpp work/gd-sim/include/Level.hpp
  
  
  /**
-@@ -40,11 +42,79 @@
+@@ -40,11 +42,85 @@
  	/// Per-frame scratch lists for runFrame, kept here so they don't reallocate every frame
  	std::vector<ObjectContainer const*> blocks;
  	std::vector<ObjectContainer const*> hazards;
@@ -23,6 +37,7 @@ diff -ruN tobi/gd-sim/include/Level.hpp work/gd-sim/include/Level.hpp
 +		int kind = 0; // 0 move, 1 toggle, 2 spawn, 3 rotate, 4 follow
 +		double x = 0;
 +		bool spawned = false;
++		bool touched = false; // touch triggered: fires when the player touches it, not when passing its x
 +		std::vector<int> groups; // the trigger's own groups (what spawn triggers target)
 +		int target = 0;
 +		double dx = 0, dy = 0;
@@ -65,7 +80,8 @@ diff -ruN tobi/gd-sim/include/Level.hpp work/gd-sim/include/Level.hpp
 +		float minX = 1e30f, maxX = -1e30f;
 +		double reach = 0;
 +		int cacheFrame = -1;
-+		double cacheX = -1; // (the path's x then: another path can be elsewhere at the same frame)
++		double cacheX = -1;
++		size_t cacheToggles = 0; // (the path's x then: another path can be elsewhere at the same frame)
 +		Vec2D offset {0, 0};
 +		bool enabled = true;
 +	};
@@ -77,6 +93,10 @@ diff -ruN tobi/gd-sim/include/Level.hpp work/gd-sim/include/Level.hpp
 +	int triggerActivation(int index, int depth = 0) const;
 +	Vec2D groupOffset(int group, int frame, int depth = 0) const;
 +	bool groupEnabled(int group, int frame) const;
++	/// Groups toggle orbs target, and the toggle orbs the path being stepped has clicked
++	std::unordered_map<int, bool> orbToggleGroups;
++	std::vector<std::pair<int, int>> const* stepToggles = nullptr;
++	std::vector<std::pair<int, int>> const* stepTouches = nullptr;
 +	void updateDynamicSet(DynamicSet& set, int frame);
  
   	static constexpr uint32_t sectionSize = 100;
@@ -90,15 +110,36 @@ diff -ruN tobi/gd-sim/include/Level.hpp work/gd-sim/include/Level.hpp
  
   	Level(std::string const& lvlString);
  
+diff -ruN tobi/gd-sim/include/Orb.hpp work/gd-sim/include/Orb.hpp
+--- a/gd-sim/include/Orb.hpp	2026-10-31 05:33:26.477514949 +0000
++++ b/gd-sim/include/Orb.hpp	2026-10-31 11:15:52.422106701 +0000
+@@ -8,10 +8,13 @@
+ 	Red,
+ 	Green,
+ 	Black,
++	Toggle, // toggle orb (1594): a click turns its target group on or off, no jump
+ };
+ 
+ struct Orb : public EffectObject {
+ 	OrbType type;
++	/// Toggle orb: its target group, negative to turn it off (0 for other orbs)
++	int toggleGroup = 0;
+ 
+ 	Orb(Vec2D size, std::unordered_map<int, std::string>&& fields);
+ 	bool touching(Player const&) const override;
 diff -ruN tobi/gd-sim/include/Player.hpp work/gd-sim/include/Player.hpp
 --- a/gd-sim/include/Player.hpp	2026-10-31 05:33:26.477514949 +0000
-+++ b/gd-sim/include/Player.hpp	2026-10-31 10:18:02.648754257 +0000
-@@ -130,6 +130,8 @@
++++ b/gd-sim/include/Player.hpp	2026-10-31 11:27:48.577810088 +0000
+@@ -130,6 +130,12 @@
  	int frame;
  
  	bool dead;
 +	/// Touching a D block this frame: a wave slides on blocks and slopes instead of dying
 +	bool dSlide = false;
++	/// Toggle orbs this path clicked: (frame, group, negative = off)
++	std::vector<std::pair<int, int>> toggleEvents;
++	/// Touch triggers this path touched: (frame, trigger index)
++	std::vector<std::pair<int, int>> touchEvents;
  	bool grounded;
  
  	/**
@@ -116,11 +157,29 @@ diff -ruN tobi/gd-sim/include/Portals.hpp work/gd-sim/include/Portals.hpp
 +    TeleportPortal(Vec2D size, std::unordered_map<int, std::string>&& fields);
 +    void collide(Player&) const override;
 +};
+diff -ruN tobi/gd-sim/src/EffectObject.cpp work/gd-sim/src/EffectObject.cpp
+--- a/gd-sim/src/EffectObject.cpp	2026-10-31 05:33:26.477514949 +0000
++++ b/gd-sim/src/EffectObject.cpp	2026-10-31 11:27:48.579379189 +0000
+@@ -13,4 +13,9 @@
+ 
+ void EffectObject::collide(Player& player) const {
+ 	player.usedEffects.insert(id);
+-}
+\ No newline at end of file
++}
++
++void TouchTrigger::collide(Player& player) const {
++	EffectObject::collide(player);
++	player.touchEvents.push_back({player.frame, trigger});
++}
 diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 --- a/gd-sim/src/Level.cpp	2026-10-31 05:33:26.478061402 +0000
-+++ b/gd-sim/src/Level.cpp	2026-10-31 10:38:54.763973972 +0000
-@@ -4,6 +4,9 @@
++++ b/gd-sim/src/Level.cpp	2026-10-31 11:27:48.578786965 +0000
+@@ -2,8 +2,12 @@
+ #include <iomanip>
+ #include <Level.hpp>
  #include <Orb.hpp>
++#include <EffectObject.hpp>
  #include <algorithm>
  #include <cstdlib>
 +#include <cmath>
@@ -129,7 +188,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
  
  // Otherwise gameStates copies every Player (instead of moving) whenever it grows
  static_assert(std::is_nothrow_move_constructible_v<Player>);
-@@ -52,6 +55,8 @@
+@@ -52,6 +56,8 @@
  
  	// First player state
  	auto player = Player();
@@ -138,7 +197,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
  
  	while (std::getline(ss, objstr, ';')) {
  		// First entry is level settings object
-@@ -82,26 +87,161 @@
+@@ -82,26 +88,172 @@
  		if (obj.count(2))
  			length = std::max(length, (float)stod_def(obj[2], 0) + 40);
  
@@ -162,6 +221,8 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 +		}
 +
 +		int objId = atoi(obj[1].c_str());
++		if (objId == 1594 && atoi(obj[51].c_str()))
++			orbToggleGroups[atoi(obj[51].c_str())] = true;
 +		if (obj.count(2))
 +			for (int g : groups)
 +				if (!groupCenters.count(g))
@@ -170,7 +231,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 +			static std::unordered_map<int, char const*> const names = {
 +				{745, "robot portal"}, {1331, "spider portal"}, {1933, "swing portal"},
 +				{1704, "green dash orb"}, {1751, "pink dash orb"}, {3004, "spider orb"}, {3005, "spider pad"},
-+				{1594, "toggle orb"}, {2902, "teleport portal"}, {2064, "teleport orb"},
++{2902, "teleport portal"}, {2064, "teleport orb"},
 +{1814, "follow player Y trigger"},
 +				{3016, "advanced follow trigger"}, {3006, "area move trigger"}, {3007, "area rotate trigger"},
 +				{3008, "area scale trigger"}, {2067, "scale trigger"}, {1932, "player control trigger"},
@@ -189,6 +250,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 +			t.kind = objId == 901 ? 0 : objId == 1049 ? 1 : objId == 1268 ? 2 : objId == 1346 ? 3 : 4;
 +			t.x = stod_def(obj[2], 0);
 +			t.spawned = obj[62] == "1";
++			t.touched = obj[11] == "1" && !t.spawned;
 +			t.groups = groups;
 +			t.target = atoi(obj[51].c_str());
 +			if (t.kind == 0) {
@@ -221,6 +283,14 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 +			}
 +			int index = triggers.size();
 +			triggers.push_back(t);
++			if (t.touched) {
++				// The player touching it fires it: an object in the level (30 x 30, GD's trigger box)
++				TouchTrigger tt({30, 30}, {{1, "0"}, {2, obj[2]}, {3, obj[3]}});
++				tt.trigger = index;
++				ObjectContainer c(tt);
++				c->id = objectCount++;
++				pending.push_back({c, groups});
++			}
 +			if (t.target) {
 +				if (t.kind == 0) movesByGroup[t.target].push_back(index);
 +				else if (t.kind == 3) rotatesByGroup[t.target].push_back(index);
@@ -249,7 +319,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 +		std::vector<int> moved, toggled, rotated;
 +		for (int g : groups) {
 +			if (movesByGroup.count(g) || followsByGroup.count(g)) moved.push_back(g);
-+			if (togglesByGroup.count(g)) toggled.push_back(g);
++			if (togglesByGroup.count(g) || orbToggleGroups.count(g)) toggled.push_back(g);
 +			if (rotatesByGroup.count(g)) rotated.push_back(g);
 +		}
 +		if (moved.empty() && toggled.empty() && rotated.empty()) {
@@ -260,7 +330,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
  			sections[sectionPos].push_back(ob);
 -
 +			continue;
-+		}
+ 		}
 +		DynamicSet* set = nullptr;
 +		for (auto& s : dynamicSets)
 +			if (s.moveGroups == moved && s.toggleGroups == toggled && s.rotateGroups == rotated) { set = &s; break; }
@@ -281,7 +351,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 +					if (t.lockX) set->reach += (t.duration / 240.0 + 0.1) * 1200 * std::abs(t.modX);
 +				}
 +			}
- 		}
++		}
 +		set->objects.push_back(dynamicObjects.size());
 +		set->minX = std::min(set->minX, ob->pos.x);
 +		set->maxX = std::max(set->maxX, ob->pos.x);
@@ -302,7 +372,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
  
  	player.level = this;
  	Player p2 = player;
-@@ -363,12 +503,46 @@
+@@ -363,12 +515,48 @@
  	bool clicked = p.button && !p.prevPlayer().button;
  	std::vector<Orb const*> clickOrbs;
  
@@ -315,6 +385,8 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 +	if (!p.isP2) {
 +		stepFrame = p.frame;
 +		stepX = p.pos.x;
++		stepToggles = &p.toggleEvents;
++		stepTouches = &p.touchEvents;
 +	}
 +	std::vector<ObjectContainer*> dynamicNear;
 +	for (auto& set : dynamicSets) {
@@ -354,7 +426,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
  			if (o->prio == 1)
  				blocks.push_back(&o);
  			else if (o->prio == 2)
-@@ -383,8 +557,18 @@
+@@ -383,8 +571,18 @@
  				if (p.dead)
  					logDeath(p, *o.operator->());
  			}
@@ -373,7 +445,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
  
  	if (clickOrbs.size() > 1) {
  		auto firstTouched = [&](Orb const* orb) {
-@@ -439,6 +623,32 @@
+@@ -439,6 +637,32 @@
  		}
  	}
  
@@ -406,7 +478,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
  	if (!p.dead)
  		p.postCollision();
  	else
-@@ -480,3 +690,15 @@
+@@ -480,3 +704,15 @@
  Player& Level::latestState() {
  	return gameStates.back();
  }
@@ -454,7 +526,7 @@ diff -ruN tobi/gd-sim/src/Objects/Block.cpp work/gd-sim/src/Objects/Block.cpp
  		p.pos.y = gdY(p.grav(p.gravTop(*this)) + p.grav(p.size.y / 2));
 diff -ruN tobi/gd-sim/src/Objects/Object.cpp work/gd-sim/src/Objects/Object.cpp
 --- a/gd-sim/src/Objects/Object.cpp	2026-10-31 05:33:26.478351506 +0000
-+++ b/gd-sim/src/Objects/Object.cpp	2026-10-31 10:18:02.646813717 +0000
++++ b/gd-sim/src/Objects/Object.cpp	2026-10-31 11:15:52.423924571 +0000
 @@ -12,6 +12,11 @@
  #include <Orb.hpp>
  #include <Slope.hpp>
@@ -467,7 +539,14 @@ diff -ruN tobi/gd-sim/src/Objects/Object.cpp work/gd-sim/src/Objects/Object.cpp
  
  /// Helper classes and functions to make assigning object IDs easier
  struct range : public std::pair<int, int> {
-@@ -134,6 +139,9 @@
+@@ -128,12 +133,15 @@
+ 	objs(({ 35 }), Pad, 25, 4)
+ 	objs(({ 140 }), Pad, 25, 5)
+ 	objs(({ 67 }), Pad, 25, 6)
+-	objs(({ 36, 84, 141, 1022, 1330, 1333 }), Orb, 36, 36)
++	objs(({ 36, 84, 141, 1022, 1330, 1333, 1594 }), Orb, 36, 36)
+ 
+ 	objs(({ 12, 13, 47, 111 , 660 }), VehiclePortal, 34, 86)
  	objs(({ 10, 11 }), GravityPortal, 25, 75)
  	objs(({ 286, 287 }), DualPortal, 41, 91)
  
@@ -476,6 +555,38 @@ diff -ruN tobi/gd-sim/src/Objects/Object.cpp work/gd-sim/src/Objects/Object.cpp
 +	objs(({ 1755 }), DBlock, 30, 30)
  	objs(({ 99, 101 }), SizePortal, 31, 90)
  	objs(({ 45, 46 }), MirrorPortal, 44, 92)
+ 
+diff -ruN tobi/gd-sim/src/Objects/Orb.cpp work/gd-sim/src/Objects/Orb.cpp
+--- a/gd-sim/src/Objects/Orb.cpp	2026-10-31 05:33:26.478351506 +0000
++++ b/gd-sim/src/Objects/Orb.cpp	2026-10-31 11:15:52.422945349 +0000
+@@ -1,3 +1,4 @@
++#include <cstdlib>
+ #include <Orb.hpp>
+ #include <Player.hpp>
+ 
+@@ -9,6 +10,10 @@
+ 		case 84:
+ 			type = OrbType::Blue;
+ 			break;
++		case 1594:
++			type = OrbType::Toggle;
++			toggleGroup = std::atoi(fields[51].c_str()) * (fields[56] == "1" ? 1 : -1);
++			break;
+ 		case 141:
+ 			type = OrbType::Pink;
+ 			break;
+@@ -141,6 +146,12 @@
+ 
+ 		EffectObject::collide(p);
+ 
++		if (type == OrbType::Toggle) {
++			if (toggleGroup)
++				p.toggleEvents.push_back({p.frame, toggleGroup});
++			return;
++		}
++
+ 		// Wave can't use non-gravity orbs
+ 		if (p.vehicle.type != VehicleType::Wave) {
  
 diff -ruN tobi/gd-sim/src/Objects/Slope.cpp work/gd-sim/src/Objects/Slope.cpp
 --- a/gd-sim/src/Objects/Slope.cpp	2026-10-31 05:33:26.478351506 +0000
@@ -505,8 +616,8 @@ diff -ruN tobi/gd-sim/src/Objects/TeleportPortal.cpp work/gd-sim/src/Objects/Tel
 +}
 diff -ruN tobi/gd-sim/src/Triggers.cpp work/gd-sim/src/Triggers.cpp
 --- a/gd-sim/src/Triggers.cpp	1970-01-01 01:00:00.000000000 +0100
-+++ b/gd-sim/src/Triggers.cpp	2026-10-31 10:54:16.393546643 +0000
-@@ -0,0 +1,237 @@
++++ b/gd-sim/src/Triggers.cpp	2026-10-31 11:27:48.579589608 +0000
+@@ -0,0 +1,253 @@
 +#include <Level.hpp>
 +#include <cmath>
 +#include <algorithm>
@@ -584,6 +695,13 @@ diff -ruN tobi/gd-sim/src/Triggers.cpp work/gd-sim/src/Triggers.cpp
 +	if (depth > 16)
 +		return INT_MAX;
 +	int best = INT_MAX;
++	if (t.touched) {
++		if (stepTouches)
++			for (auto& [f, i] : *stepTouches)
++				if (i == index)
++					return f;
++		return INT_MAX;
++	}
 +	if (!t.spawned) {
 +		// The first frame of the current path whose x reached the trigger's (player 1 only moves right). From the
 +		// path itself (gameStates), not a cache: a speed portal one path takes and another misses changes when.
@@ -655,11 +773,18 @@ diff -ruN tobi/gd-sim/src/Triggers.cpp work/gd-sim/src/Triggers.cpp
 +}
 +
 +bool Level::groupEnabled(int group, int frame) const {
-+	auto it = togglesByGroup.find(group);
-+	if (it == togglesByGroup.end())
-+		return true;
 +	int last = -1;
 +	bool on = true;
++	// Toggle orbs this path clicked
++	if (stepToggles)
++		for (auto& [f, g] : *stepToggles)
++			if (std::abs(g) == group && f < frame && f >= last) {
++				last = f;
++				on = g > 0;
++			}
++	auto it = togglesByGroup.find(group);
++	if (it == togglesByGroup.end())
++		return on;
 +	for (int i : it->second) {
 +		int a = triggerActivation(i);
 +		if (a == INT_MAX || a >= frame)
@@ -673,10 +798,12 @@ diff -ruN tobi/gd-sim/src/Triggers.cpp work/gd-sim/src/Triggers.cpp
 +}
 +
 +void Level::updateDynamicSet(DynamicSet& set, int frame) {
-+	if (set.cacheFrame == frame && set.cacheX == stepX)
++	size_t toggles = (stepToggles ? stepToggles->size() : 0) + 1000 * (stepTouches ? stepTouches->size() : 0);
++	if (set.cacheFrame == frame && set.cacheX == stepX && set.cacheToggles == toggles)
 +		return;
 +	set.cacheFrame = frame;
 +	set.cacheX = stepX;
++	set.cacheToggles = toggles;
 +	set.offset = {0, 0};
 +	for (int g : set.moveGroups) {
 +		auto o = groupOffset(g, frame);
