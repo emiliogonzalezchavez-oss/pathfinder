@@ -42,6 +42,15 @@ void Level::initLevelSettings(std::string const& lvlSettings, Player& player) {
 
 	player.upsideDown = atoi(get_or("kA11", "0"));
 	player.vehicle = Vehicle::from(static_cast<VehicleType>(atoi(get_or("kA2", "0"))));
+	// A level that starts as a wave starts with the wave's hitbox (6x6 mini, 10x10 normal), not the cube's:
+	// verified in GD, a mini wave start rests on the ground at y 6 (sim), not 18
+	if (player.vehicle.type == VehicleType::Wave)
+		player.size = player.small ? Vec2D(6, 6) : Vec2D(10, 10);
+	// ...and moves (down) on its very first step, like any wave: GD isn't grounded at the start there
+	if (player.vehicle.type == VehicleType::Wave) {
+		player.grounded = false;
+		player.velocity = -player_speeds[player.speed] * (player.small ? 2 : 1);
+	}
 
 	player.floor = 0;
 	player.ceiling = player.vehicle.bounds;

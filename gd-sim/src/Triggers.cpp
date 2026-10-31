@@ -15,7 +15,9 @@ static double bounceTime(double t) {
 
 static double ease(int type, double t, double rate) {
 	constexpr double pi = 3.14159265358979323846;
-	double period = 0.3;
+	// The elastic easings take the trigger's easing rate as their period (not cocos' default 0.3): verified in GD,
+	// Grief's corridor (elastic out, rate 2) puts its slope spike where GD's potential slope is, frame for frame
+	double period = rate > 0 ? rate : 0.3;
 	switch (type) {
 		case 1: t *= 2; return t < 1 ? 0.5 * std::pow(t, rate) : 1 - 0.5 * std::pow(2 - t, rate);
 		case 2: return std::pow(t, rate);
