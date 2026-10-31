@@ -1,6 +1,6 @@
 diff -ruN tobi/gd-sim/include/Level.hpp work/gd-sim/include/Level.hpp
 --- a/gd-sim/include/Level.hpp	2026-10-31 05:33:26.477514949 +0000
-+++ b/gd-sim/include/Level.hpp	2026-10-31 07:22:06.813361648 +0000
++++ b/gd-sim/include/Level.hpp	2026-10-31 07:41:10.721429315 +0000
 @@ -2,6 +2,8 @@
  #include <Object.hpp>
  #include <Player.hpp>
@@ -10,7 +10,7 @@ diff -ruN tobi/gd-sim/include/Level.hpp work/gd-sim/include/Level.hpp
  
  
  /**
-@@ -40,6 +42,54 @@
+@@ -40,6 +42,61 @@
  	/// Per-frame scratch lists for runFrame, kept here so they don't reallocate every frame
  	std::vector<ObjectContainer const*> blocks;
  	std::vector<ObjectContainer const*> hazards;
@@ -20,7 +20,7 @@ diff -ruN tobi/gd-sim/include/Level.hpp work/gd-sim/include/Level.hpp
 +	/// passes theirs (or a spawn trigger's delay after it fired), which doesn't depend on the inputs, so the
 +	/// sim records player 1's x per frame and works out every group's offset and on/off state from the frame alone.
 +	struct Trigger {
-+		int kind = 0; // 0 move, 1 toggle, 2 spawn
++		int kind = 0; // 0 move, 1 toggle, 2 spawn, 3 rotate
 +		double x = 0;
 +		bool spawned = false;
 +		std::vector<int> groups; // the trigger's own groups (what spawn triggers target)
@@ -33,6 +33,9 @@ diff -ruN tobi/gd-sim/include/Level.hpp work/gd-sim/include/Level.hpp
 +		double modX = 1;
 +		bool on = true;  // toggle: activate group
 +		double delay = 0; // spawn: seconds
++		double degrees = 0; // rotate: total clockwise degrees (incl. full turns)
++		int centerGroup = 0; // rotate: group of the object to rotate around (0: each object around itself)
++		bool lockRotation = false; // rotate: objects keep their own rotation
 +		mutable int activation = INT_MAX;
 +	};
 +	std::vector<Trigger> triggers;
@@ -40,13 +43,16 @@ diff -ruN tobi/gd-sim/include/Level.hpp work/gd-sim/include/Level.hpp
 +	std::vector<std::pair<float, std::string>> unsupported;
 +	/// The first unsupported object between x0 and x1, or nullptr
 +	char const* unsupportedNear(float x0, float x1) const;
-+	std::unordered_map<int, std::vector<int>> movesByGroup, togglesByGroup, spawnersByGroup;
++	std::unordered_map<int, std::vector<int>> movesByGroup, togglesByGroup, spawnersByGroup, rotatesByGroup;
++	/// The first object of each group (any object, decoration too): where rotate triggers turn around
++	struct GroupCenter { Vec2D pos; std::vector<int> groups; };
++	std::unordered_map<int, GroupCenter> groupCenters;
 +	/// Player 1's x at each frame (index = frame), filled as frames are simulated
 +	std::vector<double> xAtFrame;
 +
 +	/// Objects in a moved or toggled group: kept out of `sections` and placed every frame
 +	struct DynamicSet {
-+		std::vector<int> moveGroups, toggleGroups;
++		std::vector<int> moveGroups, toggleGroups, rotateGroups;
 +		std::vector<int> objects; // indices into dynamicObjects
 +		float minX = 1e30f, maxX = -1e30f;
 +		double reach = 0;
@@ -56,6 +62,7 @@ diff -ruN tobi/gd-sim/include/Level.hpp work/gd-sim/include/Level.hpp
 +	};
 +	std::vector<ObjectContainer> dynamicObjects;
 +	std::vector<Vec2D> dynamicBase;
++	std::vector<float> dynamicBaseRotation;
 +	std::vector<DynamicSet> dynamicSets;
 +
 +	int triggerActivation(int index, int depth = 0) const;
@@ -81,7 +88,7 @@ diff -ruN tobi/gd-sim/include/Portals.hpp work/gd-sim/include/Portals.hpp
 +};
 diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 --- a/gd-sim/src/Level.cpp	2026-10-31 05:33:26.478061402 +0000
-+++ b/gd-sim/src/Level.cpp	2026-10-31 07:23:09.388373462 +0000
++++ b/gd-sim/src/Level.cpp	2026-10-31 07:58:22.421313810 +0000
 @@ -4,6 +4,9 @@
  #include <Orb.hpp>
  #include <algorithm>
@@ -101,7 +108,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
  
  	while (std::getline(ss, objstr, ';')) {
  		// First entry is level settings object
-@@ -82,26 +87,136 @@
+@@ -82,26 +87,151 @@
  		if (obj.count(2))
  			length = std::max(length, (float)stod_def(obj[2], 0) + 40);
  
@@ -125,12 +132,16 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 +		}
 +
 +		int objId = atoi(obj[1].c_str());
++		if (obj.count(2))
++			for (int g : groups)
++				if (!groupCenters.count(g))
++					groupCenters[g] = {Vec2D((float)stod_def(obj[2], 0), ((float)stod_def(obj[3], 0) + 90.f) - 90.f), groups};
 +		{
 +			static std::unordered_map<int, char const*> const names = {
 +				{745, "robot portal"}, {1331, "spider portal"}, {1933, "swing portal"},
 +				{1704, "green dash orb"}, {1751, "pink dash orb"}, {3004, "spider orb"}, {3005, "spider pad"},
 +				{1594, "toggle orb"}, {2902, "teleport portal"}, {2064, "teleport orb"},
-+				{1346, "rotate trigger"}, {1347, "follow trigger"}, {1814, "follow player Y trigger"},
++{1347, "follow trigger"}, {1814, "follow player Y trigger"},
 +				{3016, "advanced follow trigger"}, {3006, "area move trigger"}, {3007, "area rotate trigger"},
 +				{3008, "area scale trigger"}, {2067, "scale trigger"}, {1932, "player control trigger"},
 +				{2066, "gravity trigger"}, {1935, "time warp trigger"}, {3022, "teleport trigger"},
@@ -143,9 +154,9 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 +				unsupportedPending.push_back({(float)stod_def(obj[2], 0), it->second, target});
 +			}
 +		}
-+		if (objId == 901 || objId == 1049 || objId == 1268) {
++		if (objId == 901 || objId == 1049 || objId == 1268 || objId == 1346) {
 +			Trigger t;
-+			t.kind = objId == 901 ? 0 : objId == 1049 ? 1 : 2;
++			t.kind = objId == 901 ? 0 : objId == 1049 ? 1 : objId == 1268 ? 2 : 3;
 +			t.x = stod_def(obj[2], 0);
 +			t.spawned = obj[62] == "1";
 +			t.groups = groups;
@@ -160,6 +171,13 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 +				t.modX = obj.count(143) ? stod_def(obj[143], 1) : 1;
 +				// 2.2 "use target" moves (100) and player-Y locks are left out
 +				if (obj[100] == "1") t.dx = t.dy = 0;
++			} else if (t.kind == 3) {
++				t.degrees = stod_def(obj[68], 0) + 360.0 * atoi(obj[69].c_str());
++				t.duration = (int)std::lround(stod_def(obj[10], 0) * 240);
++				t.easing = atoi(obj[30].c_str());
++				t.rate = obj.count(85) ? stod_def(obj[85], 2) : 2;
++				t.centerGroup = atoi(obj[71].c_str());
++				t.lockRotation = obj[70] == "1";
 +			} else if (t.kind == 1) {
 +				t.on = obj[56] == "1";
 +			} else {
@@ -169,6 +187,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 +			triggers.push_back(t);
 +			if (t.target) {
 +				if (t.kind == 0) movesByGroup[t.target].push_back(index);
++				else if (t.kind == 3) rotatesByGroup[t.target].push_back(index);
 +				else if (t.kind == 1) togglesByGroup[t.target].push_back(index);
 +				else spawnersByGroup[t.target].push_back(index);
 +			}
@@ -178,9 +197,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 +		// "No touch" (121) and passable (134) objects never collide (GameObject::m_isNoTouch / m_isPassable)
 +		if (obj[121] == "1" || obj[134] == "1")
 +			continue;
-+		static bool const hiddenSlopes = std::getenv("PF_HIDDEN_SLOPES") != nullptr;
-+		if (!hiddenSlopes && obj[135] == "1" && (obj[1] == "1743" || obj[1] == "1744"))
-+			continue;
++
 +
  		if (auto ob_o = Object::create(std::move(obj))) {
  			auto ob = ob_o.value();
@@ -192,12 +209,13 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 +	}
  
 +	for (auto& [ob, groups] : pending) {
-+		std::vector<int> moved, toggled;
++		std::vector<int> moved, toggled, rotated;
 +		for (int g : groups) {
 +			if (movesByGroup.count(g)) moved.push_back(g);
 +			if (togglesByGroup.count(g)) toggled.push_back(g);
++			if (rotatesByGroup.count(g)) rotated.push_back(g);
 +		}
-+		if (moved.empty() && toggled.empty()) {
++		if (moved.empty() && toggled.empty() && rotated.empty()) {
  			// Sections are divided by x position in increments of 100 (GJBaseGameLayer::addToSection)
  			size_t sectionPos = std::max(0, (int)((double)0.01f * ob->pos.x));
  			if (sectionPos >= sections.size())
@@ -205,26 +223,30 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
  			sections[sectionPos].push_back(ob);
 -
 +			continue;
- 		}
++		}
 +		DynamicSet* set = nullptr;
 +		for (auto& s : dynamicSets)
-+			if (s.moveGroups == moved && s.toggleGroups == toggled) { set = &s; break; }
++			if (s.moveGroups == moved && s.toggleGroups == toggled && s.rotateGroups == rotated) { set = &s; break; }
 +		if (!set) {
 +			dynamicSets.push_back({});
 +			set = &dynamicSets.back();
 +			set->moveGroups = moved;
 +			set->toggleGroups = toggled;
++			set->rotateGroups = rotated;
++			if (!rotated.empty())
++				set->reach += 600;
 +			for (int g : moved)
 +				for (int i : movesByGroup[g]) {
 +					auto& t = triggers[i];
 +					set->reach += (std::abs(t.dx) + std::abs(t.dy)) * 1.7 + 30;
 +					if (t.lockX) set->reach += (t.duration / 240.0 + 0.1) * 1200 * std::abs(t.modX);
 +				}
-+		}
+ 		}
 +		set->objects.push_back(dynamicObjects.size());
 +		set->minX = std::min(set->minX, ob->pos.x);
 +		set->maxX = std::max(set->maxX, ob->pos.x);
 +		dynamicBase.push_back(ob->pos);
++		dynamicBaseRotation.push_back(ob->rotation);
 +		dynamicObjects.push_back(ob);
 +	}
 +
@@ -240,7 +262,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
  
  	player.level = this;
  	Player p2 = player;
-@@ -363,12 +478,32 @@
+@@ -363,12 +493,32 @@
  	bool clicked = p.button && !p.prevPlayer().button;
  	std::vector<Orb const*> clickOrbs;
  
@@ -278,7 +300,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
  			if (o->prio == 1)
  				blocks.push_back(&o);
  			else if (o->prio == 2)
-@@ -383,8 +518,18 @@
+@@ -383,8 +533,18 @@
  				if (p.dead)
  					logDeath(p, *o.operator->());
  			}
@@ -297,7 +319,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
  
  	if (clickOrbs.size() > 1) {
  		auto firstTouched = [&](Orb const* orb) {
-@@ -480,3 +625,10 @@
+@@ -480,3 +640,10 @@
  Player& Level::latestState() {
  	return gameStates.back();
  }
@@ -310,7 +332,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 +}
 diff -ruN tobi/gd-sim/src/Objects/Object.cpp work/gd-sim/src/Objects/Object.cpp
 --- a/gd-sim/src/Objects/Object.cpp	2026-10-31 05:33:26.478351506 +0000
-+++ b/gd-sim/src/Objects/Object.cpp	2026-10-31 06:10:25.030382133 +0000
++++ b/gd-sim/src/Objects/Object.cpp	2026-10-31 07:58:22.420767316 +0000
 @@ -134,6 +134,7 @@
  	objs(({ 10, 11 }), GravityPortal, 25, 75)
  	objs(({ 286, 287 }), DualPortal, 41, 91)
@@ -318,6 +340,24 @@ diff -ruN tobi/gd-sim/src/Objects/Object.cpp work/gd-sim/src/Objects/Object.cpp
 +	objs(({ 747 }), TeleportPortal, 25, 75)
  	objs(({ 99, 101 }), SizePortal, 31, 90)
  	objs(({ 45, 46 }), MirrorPortal, 44, 92)
+ 
+@@ -150,7 +151,7 @@
+ 		289, 294, 299, 305, 309, 315, 321, 326, 331, 337,
+ 		343, 349, 353, 371, 483, 492, 523, 651, 665,
+ 		673, 709, 711, 726, 728, 886, 1338, 1341, 1344,
+-		1743, 1745, 1747, 1749, 1906
++		1906
+ 	}), Slope, 30, 30)
+ 	objs(({ 363, 366, 1717, 1723 }), SlopeHazard, 30, 30);
+ 
+@@ -158,7 +159,7 @@
+ 		291, 295, 301, 307, 311, 317, 323, 327, 333, 339,
+ 		345, 351, 355, 372, 484, 493, 522, 652, 666,
+ 		674, 710, 712, 727, 729, 887, 1339, 1342, 1345,
+-		1744, 1746, 1748, 1750, 1907
++		1907
+ 	}), Slope, 60, 30)
+ 	objs(({ 364, 367, 1718, 1724 }), SlopeHazard, 60, 30);
  
 diff -ruN tobi/gd-sim/src/Objects/TeleportPortal.cpp work/gd-sim/src/Objects/TeleportPortal.cpp
 --- a/gd-sim/src/Objects/TeleportPortal.cpp	1970-01-01 01:00:00.000000000 +0100
@@ -335,8 +375,8 @@ diff -ruN tobi/gd-sim/src/Objects/TeleportPortal.cpp work/gd-sim/src/Objects/Tel
 +}
 diff -ruN tobi/gd-sim/src/Triggers.cpp work/gd-sim/src/Triggers.cpp
 --- a/gd-sim/src/Triggers.cpp	1970-01-01 01:00:00.000000000 +0100
-+++ b/gd-sim/src/Triggers.cpp	2026-10-31 06:10:46.027841524 +0000
-@@ -0,0 +1,167 @@
++++ b/gd-sim/src/Triggers.cpp	2026-10-31 07:41:10.723936068 +0000
+@@ -0,0 +1,212 @@
 +#include <Level.hpp>
 +#include <cmath>
 +#include <algorithm>
@@ -497,10 +537,55 @@ diff -ruN tobi/gd-sim/src/Triggers.cpp work/gd-sim/src/Triggers.cpp
 +		}
 +	if (!set.enabled)
 +		return;
++
++	// Rotate triggers active on this set: (trigger, angle so far), in activation order
++	std::vector<std::pair<int, double>> turns;
++	for (int g : set.rotateGroups) {
++		auto it = rotatesByGroup.find(g);
++		if (it == rotatesByGroup.end())
++			continue;
++		for (int i : it->second) {
++			auto const& t = triggers[i];
++			int a = triggerActivation(i);
++			if (a == INT_MAX || a >= frame)
++				continue;
++			double progress = t.duration <= 0 ? 1 : std::min(1.0, (double)(frame - a) / t.duration);
++			turns.push_back({i, t.degrees * ease(t.easing, progress, t.rate)});
++		}
++	}
++	std::sort(turns.begin(), turns.end(), [&](auto& a, auto& b) { return triggers[a.first].activation < triggers[b.first].activation; });
++
 +	for (int i : set.objects) {
 +		auto& o = dynamicObjects[i];
-+		o->pos.x = dynamicBase[i].x + set.offset.x;
-+		o->pos.y = dynamicBase[i].y + set.offset.y;
++		double x = dynamicBase[i].x + set.offset.x;
++		double y = dynamicBase[i].y + set.offset.y;
++		double rot = dynamicBaseRotation[i];
++		for (auto& [ti, angle] : turns) {
++			auto const& t = triggers[ti];
++			if (t.centerGroup) {
++				auto c = groupCenters.find(t.centerGroup);
++				if (c != groupCenters.end()) {
++					// the centre object moves with its own groups
++					double cx = c->second.pos.x, cy = c->second.pos.y;
++					for (int g : c->second.groups) {
++						auto off = groupOffset(g, frame);
++						cx += off.x;
++						cy += off.y;
++					}
++					// GD's degrees are clockwise
++					double r = angle * 3.14159265358979323846 / 180;
++					double dx = x - cx, dy = y - cy;
++					x = cx + dx * std::cos(r) + dy * std::sin(r);
++					y = cy - dx * std::sin(r) + dy * std::cos(r);
++				}
++			}
++			// (the sim's rotation is counter-clockwise: GD's negated)
++			if (!t.lockRotation)
++				rot -= angle;
++		}
++		o->pos.x = (float)x;
++		o->pos.y = (float)y;
++		o->rotation = (float)rot;
 +		o->ySection = std::max(0, (int)((double)0.01f * (double)(o->pos.y + 90)));
 +	}
 +}
