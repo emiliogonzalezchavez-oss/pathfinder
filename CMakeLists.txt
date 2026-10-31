@@ -10,6 +10,9 @@ project(pathfinder VERSION 1.0.0)
 # Dev tools (debug overlay, verifier, gd-sim-test, pathfinder-cli) are left out of release builds;
 # tools/build.ps1 turns them on.
 option(PATHFINDER_DEV_TOOLS "Build the debug overlay, verifier and offline test tools" OFF)
+# The verifier alone (plays a macro in real GD and compares it with the sim every step): on in release builds too,
+# it is how the sim gets checked against the real game
+option(PATHFINDER_VERIFY "Build the in-game macro verifier" ON)
 
 add_library(${PROJECT_NAME} SHARED
     src/main.cpp
@@ -18,6 +21,8 @@ add_library(${PROJECT_NAME} SHARED
 )
 if (PATHFINDER_DEV_TOOLS)
     target_sources(${PROJECT_NAME} PRIVATE src/debug.cpp src/verify.cpp)
+elseif (PATHFINDER_VERIFY)
+    target_sources(${PROJECT_NAME} PRIVATE src/verify.cpp)
 endif()
 
 if (NOT DEFINED ENV{GEODE_SDK})
