@@ -197,6 +197,15 @@ Vec2D Level::groupOffset(int group, int frame, int depth) const {
 			off.y += (now.y - start.y) * t.modY;
 		}
 	}
+	// Follow player Y: where player 1's path has pulled the group by then
+	if (auto fy = followYByGroup.find(group); fy != followYByGroup.end() && frame > baseFrame && frame <= currentFrame()) {
+		auto const& st = getState(frame);
+		for (int i : fy->second) {
+			int slot = triggers[i].fyIndex;
+			if (slot >= 0 && slot < (int)st.followY.size())
+				off.y += st.followY[slot];
+		}
+	}
 	auto it = movesByGroup.find(group);
 	if (it == movesByGroup.end())
 		return off;

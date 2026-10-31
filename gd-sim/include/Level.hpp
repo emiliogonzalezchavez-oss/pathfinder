@@ -48,7 +48,7 @@ class Level {
 	/// passes theirs (or a spawn trigger's delay after it fired), which doesn't depend on the inputs, so the
 	/// sim records player 1's x per frame and works out every group's offset and on/off state from the frame alone.
 	struct Trigger {
-		int kind = 0; // 0 move, 1 toggle, 2 spawn, 3 rotate, 4 follow, 5 stop, 6 pickup, 7 count, 8 instant count
+		int kind = 0; // 0 move, 1 toggle, 2 spawn, 3 rotate, 4 follow, 5 stop, 6 pickup, 7 count, 8 instant count, 9 follow player Y
 		double x = 0;
 		bool spawned = false;
 		bool touched = false; // touch triggered: fires when the player touches it, not when passing its x
@@ -68,6 +68,8 @@ class Level {
 		double modY = 1; // follow: y multiplier (modX is the x one)
 		int item = 0, count = 0, compare = 0; // pickup / count / instant count: item ID (80), count (77), comparison (88)
 		bool overrideCount = false; // pickup: set the item instead of adding (139)
+		double fySpeed = 0, fyDelay = 0, fyMaxSpeed = 0; int fyOffset = 0; // follow player Y: 90, 91, 105, 92
+		int fyIndex = -1; // follow player Y: slot in Player::followY
 		mutable int activation = INT_MAX;
 	};
 	std::vector<Trigger> triggers;
@@ -80,6 +82,11 @@ class Level {
 	std::unordered_map<int, std::vector<int>> movesByGroup, togglesByGroup, spawnersByGroup, rotatesByGroup, followsByGroup;
 	/// Stop triggers (1616) by the group of triggers they stop
 	std::unordered_map<int, std::vector<int>> stopsByGroup;
+	/// Follow player Y triggers by target group, and all of them in order (their slots in Player::followY)
+	std::unordered_map<int, std::vector<int>> followYByGroup;
+	std::vector<int> followYTriggers;
+	/// GJBaseGameLayer::processPlayerFollowActions for this step (player 1, after its collisions)
+	void stepFollowY(Player& p);
 	/// Pickup triggers by item ID
 	std::unordered_map<int, std::vector<int>> pickupsByItem;
 	/// An item's value at the start of a frame (pickup triggers fired before it)

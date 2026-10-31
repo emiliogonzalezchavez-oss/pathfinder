@@ -128,7 +128,7 @@ Level::Level(std::string const& lvlString) {
 				
 				
 
-{1814, "follow player Y trigger"},
+
 				{3016, "advanced follow trigger"}, {3006, "area move trigger"}, {3007, "area rotate trigger"},
 				{3008, "area scale trigger"}, {2067, "scale trigger"}, {1932, "player control trigger"},
 				{2066, "gravity trigger"}, {1935, "time warp trigger"}, {3022, "teleport trigger"},
@@ -142,10 +142,10 @@ Level::Level(std::string const& lvlString) {
 			}
 		}
 		if (objId == 901 || objId == 1049 || objId == 1268 || objId == 1346 || objId == 1347 || objId == 1616
-			|| objId == 1817 || objId == 1611 || objId == 1811) {
+			|| objId == 1817 || objId == 1611 || objId == 1811 || objId == 1814) {
 			Trigger t;
 			t.kind = objId == 901 ? 0 : objId == 1049 ? 1 : objId == 1268 ? 2 : objId == 1346 ? 3 : objId == 1347 ? 4 : objId == 1616 ? 5
-				: objId == 1817 ? 6 : objId == 1611 ? 7 : 8;
+				: objId == 1817 ? 6 : objId == 1611 ? 7 : objId == 1811 ? 8 : 9;
 			t.x = stod_def(obj[2], 0);
 			t.spawned = obj[62] == "1";
 			t.touched = obj[11] == "1" && !t.spawned;
@@ -176,6 +176,12 @@ Level::Level(std::string const& lvlString) {
 				t.lockRotation = obj[70] == "1";
 			} else if (t.kind == 1) {
 				t.on = obj[56] == "1";
+			} else if (t.kind == 9) {
+				t.fySpeed = stod_def(obj[90], 0);
+				t.fyDelay = stod_def(obj[91], 0);
+				t.fyOffset = atoi(obj[92].c_str());
+				t.fyMaxSpeed = stod_def(obj[105], 0);
+				t.duration = (int)std::lround(stod_def(obj[10], 0) * 240);
 			} else if (t.kind >= 6) {
 				t.item = atoi(obj[80].c_str());
 				t.count = atoi(obj[77].c_str());
@@ -197,7 +203,12 @@ Level::Level(std::string const& lvlString) {
 			}
 			if (t.kind == 6)
 				pickupsByItem[t.item].push_back(index);
-			if (t.target && t.kind != 6) {
+			if (t.kind == 9) {
+				triggers.back().fyIndex = followYTriggers.size();
+				followYTriggers.push_back(index);
+				followYByGroup[t.target].push_back(index);
+			}
+			if (t.target && t.kind != 6 && t.kind != 9) {
 				if (t.kind == 0) movesByGroup[t.target].push_back(index);
 				else if (t.kind == 3) rotatesByGroup[t.target].push_back(index);
 				else if (t.kind == 4) followsByGroup[t.target].push_back(index);
@@ -225,7 +236,7 @@ Level::Level(std::string const& lvlString) {
 	for (auto& [ob, groups] : pending) {
 		std::vector<int> moved, toggled, rotated;
 		for (int g : groups) {
-			if (movesByGroup.count(g) || followsByGroup.count(g)) moved.push_back(g);
+			if (movesByGroup.count(g) || followsByGroup.count(g) || followYByGroup.count(g)) moved.push_back(g);
 			if (togglesByGroup.count(g) || orbToggleGroups.count(g)) toggled.push_back(g);
 			if (rotatesByGroup.count(g)) rotated.push_back(g);
 		}
@@ -249,7 +260,7 @@ Level::Level(std::string const& lvlString) {
 			if (!rotated.empty())
 				set->reach += 600;
 			for (int g : moved) {
-				if (followsByGroup.count(g))
+				if (followsByGroup.count(g) || followYByGroup.count(g))
 					set->reach += 900;
 				for (int i : movesByGroup[g]) {
 					auto& t = triggers[i];
@@ -689,6 +700,9 @@ int Level::stepPlayer(Player& p, bool pressed, float dt) {
 	else
 		p.vehicle.clamp(p); // GD keeps the player within the mode's bounds before object collisions kill it
 
+	if (!p.isP2)
+		stepFollowY(p);
+
 	return numCollisions;
 }
 
@@ -859,4 +873,31 @@ void Level::spiderJump(Player& p, bool wide) {
 	p.grounded = false;
 	p.onGround2 = false;
 	p.input = false;
+}
+
+void Level::stepFollowY(Player& p) {
+	if (followYTriggers.empty())
+		return;
+	if (p.followY.size() != followYTriggers.size())
+		p.followY.assign(followYTriggers.size(), 0);
+	// processPlayerFollowActions(dt): each object moves (playerY(delay ago) + offset - its y) * min(1, dt * 60 * speed),
+	// at most dt * 60 * maxSpeed (if set). (The sim moves the group by its first object's.)
+	for (int i : followYTriggers) {
+		auto const& t = triggers[i];
+		int a = triggerActivation(i);
+		if (a == INT_MAX || a >= p.frame || (t.duration > 0 && p.frame > a + t.duration))
+			continue;
+		auto c = groupCenters.find(t.target);
+		if (c == groupCenters.end())
+			continue;
+		double gain = std::clamp(p.dt * 60 * t.fySpeed, 0.0, 1.0);
+		int back = t.fyDelay > 0 ? std::min(199, (int)(t.fyDelay / 0.01f)) * 240 / 100 : 0;
+		float py = (back > 0 && p.frame - back > baseFrame) ? getState(p.frame - back).pos.y : p.pos.y;
+		float cur = c->second.pos.y + p.followY[t.fyIndex];
+		float dy = (float)(((py + t.fyOffset) - cur) * gain);
+		float maxStep = (float)(p.dt * 60 * t.fyMaxSpeed);
+		if (maxStep > 0)
+			dy = std::clamp(dy, -maxStep, maxStep);
+		p.followY[t.fyIndex] += dy;
+	}
 }
