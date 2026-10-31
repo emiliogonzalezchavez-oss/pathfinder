@@ -49,6 +49,11 @@ struct TeleportPortal : public EffectObject {
     /// 2.2 teleport portal (2902) / teleport orb (3027): the group whose object it sends the player to (key 51), 0 for 747
     int target = 0;
     bool orb = false;
+    /// TeleportPortalObject options: m_ignoreX / Y (352, 353), m_gravityMode (354: 1 normal, 2 flipped, 3 toggle),
+    /// m_staticForceEnabled / m_staticForce / m_staticForceAdditive (345, 346, 443)
+    bool ignoreX = false, ignoreY = false, staticForce = false, additive = false;
+    int gravityMode = 0;
+    float force = 0, angle = 90;
     TeleportPortal(Vec2D size, std::unordered_map<int, std::string>&& fields);
     void collide(Player&) const override;
 };

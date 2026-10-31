@@ -297,10 +297,41 @@ void Level::updateDynamicSet(DynamicSet& set, int frame) {
 	}
 	std::stable_sort(turns.begin(), turns.end(), [&](auto& a, auto& b) { return triggerActivation(a.first) < triggerActivation(b.first); });
 
+	// Scale triggers on this set: (factor x, factor y, centre group) so far
+	std::vector<std::tuple<double, double, int>> scales;
+	for (int g : set.rotateGroups) {
+		auto it = scalesByGroup.find(g);
+		if (it == scalesByGroup.end())
+			continue;
+		for (int i : it->second) {
+			auto const& t = triggers[i];
+			int a = triggerActivation(i);
+			if (a == INT_MAX || a >= moved)
+				continue;
+			double progress = t.duration <= 0 ? 1 : std::min(1.0, (double)(std::min(moved, stopFrame(i, a)) - a) / t.duration);
+			double e = ease(t.easing, progress, t.rate);
+			scales.push_back({1 + (t.scaleX - 1) * e, 1 + (t.scaleY - 1) * e, t.centerGroup});
+		}
+	}
+
 	for (int i : set.objects) {
 		auto& o = dynamicObjects[i];
 		double x = dynamicBase[i].x + set.offset.x;
 		double y = dynamicBase[i].y + set.offset.y;
+		if (!scales.empty()) {
+			Vec2D size = dynamicBaseSize[i];
+			for (auto& [sx, sy, cg] : scales) {
+				size.x *= (float)sx;
+				size.y *= (float)sy;
+				auto c = cg ? groupCenters.find(cg) : groupCenters.end();
+				if (c != groupCenters.end()) {
+					double cx = c->second.pos.x, cy = c->second.pos.y;
+					x = cx + (x - cx) * sx;
+					y = cy + (y - cy) * sy;
+				}
+			}
+			o->size = size;
+		}
 		double rot = dynamicBaseRotation[i];
 		for (auto& [ti, angle] : turns) {
 			auto const& t = triggers[ti];

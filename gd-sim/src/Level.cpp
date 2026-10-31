@@ -130,7 +130,7 @@ Level::Level(std::string const& lvlString) {
 
 
 				{3016, "advanced follow trigger"}, {3006, "area move trigger"}, {3007, "area rotate trigger"},
-				{3008, "area scale trigger"}, {2067, "scale trigger"}, {1932, "player control trigger"},
+				{3008, "area scale trigger"}, 
 				
 				
 				{1812, "on death trigger"}, {2899, "options trigger"},
@@ -142,10 +142,10 @@ Level::Level(std::string const& lvlString) {
 			}
 		}
 		if (objId == 901 || objId == 1049 || objId == 1268 || objId == 1346 || objId == 1347 || objId == 1616
-			|| objId == 1817 || objId == 1611 || objId == 1811 || objId == 1814 || objId == 2066 || objId == 3022 || objId == 1595 || objId == 1935) {
+			|| objId == 1817 || objId == 1611 || objId == 1811 || objId == 1814 || objId == 2066 || objId == 3022 || objId == 1595 || objId == 1935 || objId == 1932 || objId == 2067) {
 			Trigger t;
 			t.kind = objId == 901 ? 0 : objId == 1049 ? 1 : objId == 1268 ? 2 : objId == 1346 ? 3 : objId == 1347 ? 4 : objId == 1616 ? 5
-				: objId == 1817 ? 6 : objId == 1611 ? 7 : objId == 1811 ? 8 : objId == 1814 ? 9 : objId == 2066 ? 10 : objId == 3022 ? 11 : objId == 1595 ? 12 : 13;
+				: objId == 1817 ? 6 : objId == 1611 ? 7 : objId == 1811 ? 8 : objId == 1814 ? 9 : objId == 2066 ? 10 : objId == 3022 ? 11 : objId == 1595 ? 12 : objId == 1935 ? 13 : objId == 1932 ? 14 : 15;
 			t.x = stod_def(obj[2], 0);
 			t.spawned = obj[62] == "1";
 			t.touched = obj[11] == "1" && !t.spawned;
@@ -176,6 +176,17 @@ Level::Level(std::string const& lvlString) {
 				t.lockRotation = obj[70] == "1";
 			} else if (t.kind == 1) {
 				t.on = obj[56] == "1";
+			} else if (t.kind == 14) {
+				t.stopJump = obj[540] == "1";
+			} else if (t.kind == 15) {
+				t.scaleX = stod_def(obj[150], 1);
+				t.scaleY = stod_def(obj[151], 1);
+				if (obj[153] == "1" && t.scaleX != 0) t.scaleX = 1 / t.scaleX;
+				if (obj[154] == "1" && t.scaleY != 0) t.scaleY = 1 / t.scaleY;
+				t.duration = (int)std::lround(stod_def(obj[10], 0) * 240);
+				t.easing = atoi(obj[30].c_str());
+				t.rate = obj.count(85) ? stod_def(obj[85], 2) : 2;
+				t.centerGroup = atoi(obj[71].c_str());
 			} else if (t.kind == 12) {
 				t.touchHold = obj[81] == "1";
 				t.touchMode = atoi(obj[82].c_str());
@@ -222,12 +233,16 @@ Level::Level(std::string const& lvlString) {
 			}
 			if (t.kind == 13)
 				timeWarpTriggers.push_back(index);
+			if (t.kind == 14)
+				controlTriggers.push_back(index);
+			if (t.kind == 15)
+				scalesByGroup[t.target].push_back(index);
 			if (t.kind == 9) {
 				triggers.back().fyIndex = followYTriggers.size();
 				followYTriggers.push_back(index);
 				followYByGroup[t.target].push_back(index);
 			}
-			if (t.target && t.kind != 6 && t.kind != 9 && t.kind != 10 && t.kind != 11 && t.kind != 12 && t.kind != 13) {
+			if (t.target && t.kind != 6 && t.kind != 9 && t.kind != 10 && t.kind != 11 && t.kind != 12 && t.kind != 13 && t.kind != 14 && t.kind != 15) {
 				if (t.kind == 0) movesByGroup[t.target].push_back(index);
 				else if (t.kind == 3) rotatesByGroup[t.target].push_back(index);
 				else if (t.kind == 4) followsByGroup[t.target].push_back(index);
@@ -257,7 +272,7 @@ Level::Level(std::string const& lvlString) {
 		for (int g : groups) {
 			if (movesByGroup.count(g) || followsByGroup.count(g) || followYByGroup.count(g)) moved.push_back(g);
 			if (togglesByGroup.count(g) || orbToggleGroups.count(g) || touchGroups.count(g)) toggled.push_back(g);
-			if (rotatesByGroup.count(g)) rotated.push_back(g);
+			if (rotatesByGroup.count(g) || scalesByGroup.count(g)) rotated.push_back(g);
 		}
 		if (moved.empty() && toggled.empty() && rotated.empty()) {
 			// Sections are divided by x position in increments of 100 (GJBaseGameLayer::addToSection)
@@ -293,6 +308,7 @@ Level::Level(std::string const& lvlString) {
 		set->maxX = std::max(set->maxX, ob->pos.x);
 		dynamicBase.push_back(ob->pos);
 		dynamicBaseRotation.push_back(ob->rotation);
+		dynamicBaseSize.push_back(ob->size);
 		dynamicObjects.push_back(ob);
 	}
 
@@ -723,6 +739,19 @@ int Level::stepPlayer(Player& p, bool pressed, float dt) {
 
 	if (!p.isP2)
 		stepFollowY(p);
+	// Player control (activatePlayerControlTrigger): stop jump lets go of the jump button (m_isHolding, m_jumpBuffered,
+	// the robot's hold, a dash) until the next press
+	for (int i : controlTriggers) {
+		if (p.isP2 || !triggers[i].stopJump || triggerActivation(i) != p.frame)
+			continue;
+		p.input = false;
+		p.jumpBuffered = false;
+		p.robotReleased = true;
+		if (p.dashing) {
+			p.dashing = false;
+			p.velocity = 0;
+		}
+	}
 	// Touch triggers that have fired: a press turns the target group on, off or the other way (hold mode: the release
 	// undoes it)
 	if (!p.isP2 && !touchTriggers.empty() && p.button != p.prevPlayer().button) {
