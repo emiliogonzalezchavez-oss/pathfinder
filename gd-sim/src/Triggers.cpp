@@ -188,12 +188,19 @@ void Level::updateDynamicSet(DynamicSet& set, int frame) {
 	set.cacheFrame = frame;
 	set.cacheX = stepX;
 	set.cacheToggles = toggles;
+	// GD moves objects (its move / rotate actions) after the player's collisions in a step: the collisions of the
+	// step for frame f see the objects where the actions left them at the end of the step before. Verified in GD
+	// (Unity: a block rising under the cube is where the sim has it a step earlier).
+	int moved = frame - 1;
 	set.offset = {0, 0};
+	double prevY = 0;
 	for (int g : set.moveGroups) {
-		auto o = groupOffset(g, frame);
+		auto o = groupOffset(g, moved);
 		set.offset.x += o.x;
 		set.offset.y += o.y;
+		prevY += groupOffset(g, moved - 1).y;
 	}
+	float moveDy = (float)(set.offset.y - prevY);
 	set.enabled = true;
 	for (int g : set.toggleGroups)
 		if (!groupEnabled(g, frame)) {
@@ -212,9 +219,9 @@ void Level::updateDynamicSet(DynamicSet& set, int frame) {
 		for (int i : it->second) {
 			auto const& t = triggers[i];
 			int a = triggerActivation(i);
-			if (a == INT_MAX || a >= frame)
+			if (a == INT_MAX || a >= moved)
 				continue;
-			double progress = t.duration <= 0 ? 1 : std::min(1.0, (double)(frame - a) / t.duration);
+			double progress = t.duration <= 0 ? 1 : std::min(1.0, (double)(moved - a) / t.duration);
 			turns.push_back({i, t.degrees * ease(t.easing, progress, t.rate)});
 		}
 	}
@@ -234,7 +241,7 @@ void Level::updateDynamicSet(DynamicSet& set, int frame) {
 					// the centre object moves with its own groups
 					double cx = c->second.pos.x, cy = c->second.pos.y;
 					for (int g : c->second.groups) {
-						auto off = groupOffset(g, frame);
+						auto off = groupOffset(g, moved);
 						cx += off.x;
 						cy += off.y;
 					}
@@ -252,6 +259,7 @@ void Level::updateDynamicSet(DynamicSet& set, int frame) {
 		o->pos.x = (float)x;
 		o->pos.y = (float)y;
 		o->rotation = (float)rot;
+		o->moveDy = moveDy;
 		o->ySection = std::max(0, (int)((double)0.01f * (double)(o->pos.y + 90)));
 	}
 }

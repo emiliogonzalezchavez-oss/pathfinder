@@ -145,6 +145,16 @@ void Block::collideBlock(Player& p, bool bare) const {
 	double landClip = (p.vehicle.type == VehicleType::Ufo || p.vehicle.type == VehicleType::Ship) ? 6 : 10;
 	landClip += slopeClip + std::max(0.0, -(double)p.grav(p.pos.y - p.prevPlayer().pos.y));
 
+	// A block a trigger moved towards the player's feet this step (up, or down for an upside-down player):
+	// collidedWithObjectInternal takes its speed (moved / dt, dt 0.25 at 240 steps/s) as objVel, widens the landing
+	// distance by it, and a rising player in landing range lands on it (unless it moves faster than 5): put on top,
+	// hitGround, then its y velocity is max(its own, objVel). Verified in GD (Unity: a block easing up under a rising cube).
+	double towardVel = 0;
+	if (p.grav(moveDy) > 0)
+		towardVel = std::abs((double)moveDy) / (double)(float)(p.dt * 60);
+	landClip += towardVel;
+	bool fastBlock = towardVel > 5;
+
 	// A blue orb clicked this frame flips the player. GD clicks it a step later, so in this step it still
 	// lands on a block on the old side (not grounded: the orb launches it), and none on the new side. With
 	// the button already held, GD takes the orb in this step's collisions, before the blocks, which then
@@ -237,7 +247,23 @@ void Block::collideBlock(Player& p, bool bare) const {
 	// collidedWithObjectInternal: a player rising (y velocity > 0, not off a slope) with its feet within the
 	// landing distance of the block's top neither lands nor gets killed by its inner hitbox (GD leaves that
 	// test out once the player is in landing range)
-	bool risingOnto = p.gravTop(*this) - bottom <= landClip && p.velocity > 0 && !padHitBefore && !p.slope.was;
+	bool risingOnto = p.gravTop(*this) - bottom <= landClip && p.velocity > 0 && !padHitBefore && !p.slope.was && !fastBlock;
+	if (risingOnto && towardVel > 0 && p.vehicle.type != VehicleType::Wave) {
+		double rise = p.grav(p.pos.y - p.prevPlayer().pos.y);
+		double objBottom = p.gravBottom(*this);
+		if (objBottom < bottom + landClip && objBottom < bottom + landClip - rise) {
+			p.pos.y = gdY(p.grav(p.gravTop(*this)) + p.grav(p.size.y / 2));
+			p.applyResize();
+			// (hitGround grounds a player at y velocity <= 5, before the velocity is set back)
+			if (p.velocity <= 5 * 54) {
+				p.grounded = true;
+				p.groundCleared = false;
+			}
+			p.hitGroundRotation();
+			p.velocity = std::max(p.velocity, towardVel * 54);
+			return;
+		}
+	}
 
 	// A ship, ufo or ball within the landing or head-hit distance of the block (GD's landing and head branches)
 	// lands, stops its head or nothing; GD never tests its inner hitbox there
