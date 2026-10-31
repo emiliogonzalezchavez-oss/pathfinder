@@ -1,17 +1,3 @@
-diff -ruN tobi/gd-sim/include/EffectObject.hpp work/gd-sim/include/EffectObject.hpp
---- a/gd-sim/include/EffectObject.hpp	2026-10-31 05:33:26.477514949 +0000
-+++ b/gd-sim/include/EffectObject.hpp	2026-10-31 11:27:48.579153500 +0000
-@@ -11,3 +11,10 @@
-     bool touching(Player const&) const override;
-     void collide(Player&) const override;
- };
-+
-+/// A touch-triggered trigger: touching it records the touch on the player (Level::triggerActivation reads it)
-+struct TouchTrigger : public EffectObject {
-+    int trigger = 0;
-+    using EffectObject::EffectObject;
-+    void collide(Player&) const override;
-+};
 diff -ruN tobi/gd-sim/include/Level.hpp work/gd-sim/include/Level.hpp
 --- a/gd-sim/include/Level.hpp	2026-10-31 05:33:26.477514949 +0000
 +++ b/gd-sim/include/Level.hpp	2026-10-31 11:27:48.574809711 +0000
@@ -157,29 +143,27 @@ diff -ruN tobi/gd-sim/include/Portals.hpp work/gd-sim/include/Portals.hpp
 +    TeleportPortal(Vec2D size, std::unordered_map<int, std::string>&& fields);
 +    void collide(Player&) const override;
 +};
-diff -ruN tobi/gd-sim/src/EffectObject.cpp work/gd-sim/src/EffectObject.cpp
---- a/gd-sim/src/EffectObject.cpp	2026-10-31 05:33:26.477514949 +0000
-+++ b/gd-sim/src/EffectObject.cpp	2026-10-31 11:27:48.579379189 +0000
-@@ -13,4 +13,9 @@
- 
- void EffectObject::collide(Player& player) const {
- 	player.usedEffects.insert(id);
--}
-\ No newline at end of file
-+}
+diff -ruN tobi/gd-sim/include/TouchTrigger.hpp work/gd-sim/include/TouchTrigger.hpp
+--- a/gd-sim/include/TouchTrigger.hpp	1970-01-01 01:00:00.000000000 +0100
++++ b/gd-sim/include/TouchTrigger.hpp	2026-10-31 11:48:54.029824167 +0000
+@@ -0,0 +1,9 @@
++#pragma once
++#include <EffectObject.hpp>
 +
-+void TouchTrigger::collide(Player& player) const {
-+	EffectObject::collide(player);
-+	player.touchEvents.push_back({player.frame, trigger});
-+}
++/// A touch-triggered trigger: touching it records the touch on the player (Level::triggerActivation reads it)
++struct TouchTrigger : public EffectObject {
++    int trigger = 0;
++    using EffectObject::EffectObject;
++    void collide(Player&) const override;
++};
 diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 --- a/gd-sim/src/Level.cpp	2026-10-31 05:33:26.478061402 +0000
-+++ b/gd-sim/src/Level.cpp	2026-10-31 11:27:48.578786965 +0000
++++ b/gd-sim/src/Level.cpp	2026-10-31 11:48:54.141933624 +0000
 @@ -2,8 +2,12 @@
  #include <iomanip>
  #include <Level.hpp>
  #include <Orb.hpp>
-+#include <EffectObject.hpp>
++#include <TouchTrigger.hpp>
  #include <algorithm>
  #include <cstdlib>
 +#include <cmath>
@@ -616,9 +600,11 @@ diff -ruN tobi/gd-sim/src/Objects/TeleportPortal.cpp work/gd-sim/src/Objects/Tel
 +}
 diff -ruN tobi/gd-sim/src/Triggers.cpp work/gd-sim/src/Triggers.cpp
 --- a/gd-sim/src/Triggers.cpp	1970-01-01 01:00:00.000000000 +0100
-+++ b/gd-sim/src/Triggers.cpp	2026-10-31 11:27:48.579589608 +0000
-@@ -0,0 +1,253 @@
++++ b/gd-sim/src/Triggers.cpp	2026-10-31 11:48:54.143303650 +0000
+@@ -0,0 +1,260 @@
 +#include <Level.hpp>
++#include <TouchTrigger.hpp>
++#include <Player.hpp>
 +#include <cmath>
 +#include <algorithm>
 +
@@ -870,6 +856,11 @@ diff -ruN tobi/gd-sim/src/Triggers.cpp work/gd-sim/src/Triggers.cpp
 +		o->rotation = (float)rot;
 +		o->ySection = std::max(0, (int)((double)0.01f * (double)(o->pos.y + 90)));
 +	}
++}
++
++void TouchTrigger::collide(Player& player) const {
++	EffectObject::collide(player);
++	player.touchEvents.push_back({player.frame, trigger});
 +}
 diff -ruN tobi/src/cli.cpp work/src/cli.cpp
 --- a/src/cli.cpp	2026-10-31 05:33:26.480216728 +0000
