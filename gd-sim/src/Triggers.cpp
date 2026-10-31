@@ -118,6 +118,22 @@ int Level::triggerActivation(int index, int depth) const {
 
 
 
+int Level::stopFrame(int index, int a) const {
+	// A stop trigger (or pause, taken as a stop) whose target group holds this trigger, fired at or after it started
+	int best = INT_MAX;
+	for (int g : triggers[index].groups) {
+		auto it = stopsByGroup.find(g);
+		if (it == stopsByGroup.end())
+			continue;
+		for (int s : it->second) {
+			int f = triggerActivation(s);
+			if (f != INT_MAX && f >= a)
+				best = std::min(best, f);
+		}
+	}
+	return best;
+}
+
 Vec2D Level::groupOffset(int group, int frame, int depth) const {
 	Vec2D off {0, 0};
 	if (depth > 8)
@@ -144,7 +160,7 @@ Vec2D Level::groupOffset(int group, int frame, int depth) const {
 		int a = triggerActivation(i);
 		if (a == INT_MAX || a >= frame)
 			continue;
-		int elapsed = frame - a;
+		int elapsed = std::min(frame, stopFrame(i, a)) - a;
 		double progress = t.duration <= 0 ? 1 : std::min(1.0, (double)elapsed / t.duration);
 		double e = ease(t.easing, progress, t.rate);
 		if (t.lockX)
@@ -221,7 +237,7 @@ void Level::updateDynamicSet(DynamicSet& set, int frame) {
 			int a = triggerActivation(i);
 			if (a == INT_MAX || a >= moved)
 				continue;
-			double progress = t.duration <= 0 ? 1 : std::min(1.0, (double)(moved - a) / t.duration);
+			double progress = t.duration <= 0 ? 1 : std::min(1.0, (double)(std::min(moved, stopFrame(i, a)) - a) / t.duration);
 			turns.push_back({i, t.degrees * ease(t.easing, progress, t.rate)});
 		}
 	}

@@ -141,9 +141,9 @@ Level::Level(std::string const& lvlString) {
 				unsupportedPending.push_back({(float)stod_def(obj[2], 0), it->second, target});
 			}
 		}
-		if (objId == 901 || objId == 1049 || objId == 1268 || objId == 1346 || objId == 1347) {
+		if (objId == 901 || objId == 1049 || objId == 1268 || objId == 1346 || objId == 1347 || objId == 1616) {
 			Trigger t;
-			t.kind = objId == 901 ? 0 : objId == 1049 ? 1 : objId == 1268 ? 2 : objId == 1346 ? 3 : 4;
+			t.kind = objId == 901 ? 0 : objId == 1049 ? 1 : objId == 1268 ? 2 : objId == 1346 ? 3 : objId == 1347 ? 4 : 5;
 			t.x = stod_def(obj[2], 0);
 			t.spawned = obj[62] == "1";
 			t.touched = obj[11] == "1" && !t.spawned;
@@ -192,6 +192,7 @@ Level::Level(std::string const& lvlString) {
 				else if (t.kind == 3) rotatesByGroup[t.target].push_back(index);
 				else if (t.kind == 4) followsByGroup[t.target].push_back(index);
 				else if (t.kind == 1) togglesByGroup[t.target].push_back(index);
+				else if (t.kind == 5) { if (obj[580].empty() || obj[580] == "0" || obj[580] == "1") stopsByGroup[t.target].push_back(index); }
 				else spawnersByGroup[t.target].push_back(index);
 			}
 			continue;

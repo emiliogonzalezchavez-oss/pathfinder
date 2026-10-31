@@ -48,7 +48,7 @@ class Level {
 	/// passes theirs (or a spawn trigger's delay after it fired), which doesn't depend on the inputs, so the
 	/// sim records player 1's x per frame and works out every group's offset and on/off state from the frame alone.
 	struct Trigger {
-		int kind = 0; // 0 move, 1 toggle, 2 spawn, 3 rotate, 4 follow
+		int kind = 0; // 0 move, 1 toggle, 2 spawn, 3 rotate, 4 follow, 5 stop
 		double x = 0;
 		bool spawned = false;
 		bool touched = false; // touch triggered: fires when the player touches it, not when passing its x
@@ -76,6 +76,10 @@ class Level {
 	/// The first unsupported object after x, or nullptr
 	std::pair<float, char const*> const* nextUnsupported(float x) const;
 	std::unordered_map<int, std::vector<int>> movesByGroup, togglesByGroup, spawnersByGroup, rotatesByGroup, followsByGroup;
+	/// Stop triggers (1616) by the group of triggers they stop
+	std::unordered_map<int, std::vector<int>> stopsByGroup;
+	/// The first frame a stop trigger halted trigger `index` (activated at `a`), INT_MAX if none
+	int stopFrame(int index, int a) const;
 	/// The first object of each group (any object, decoration too): where rotate triggers turn around
 	struct GroupCenter { Vec2D pos; std::vector<int> groups; };
 	std::unordered_map<int, GroupCenter> groupCenters;
