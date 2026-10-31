@@ -359,10 +359,10 @@ void loadJobFile() {
 
 // Read the jobs as soon as the mod loads, so the no-pause hooks already cover the loading screen
 // (minimising GD there pauses the director and loading never finishes). They start at the menu.
+// (not muted here: FMODAudioEngine::get() during loading creates the engine before GD's own setup, which crashed GD at the
+// loading screen; MenuLayer mutes it)
 $on_mod(Loaded) {
 	loadJobFile();
-	if (s_jobMode)
-		muteAll();
 }
 
 void pickAndVerify(std::string levelKey, Ref<GJGameLevel> level) {
