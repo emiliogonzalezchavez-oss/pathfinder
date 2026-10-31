@@ -159,7 +159,7 @@ void Orb::collide(Player& p) const {
 				p.velocity = -810;
 				p.accelerating = true; // PlayerObject::ringJump, only for the black (drop) ring
 			} else {
-				p.velocity = orb_velocities.get(type, p.vehicle.type, p.small , std::min(3, p.speed));
+				p.velocity = orb_velocities.get(type, p.vehicle.type == VehicleType::Robot ? VehicleType::Cube : p.vehicle.type, p.small , std::min(3, p.speed));
 				p.grounded = false;
 				p.boosted = true;
 

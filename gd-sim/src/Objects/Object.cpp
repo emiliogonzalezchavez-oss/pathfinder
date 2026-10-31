@@ -135,7 +135,7 @@ std::optional<ObjectContainer> Object::create(std::unordered_map<int, std::strin
 	objs(({ 67 }), Pad, 25, 6)
 	objs(({ 36, 84, 141, 1022, 1330, 1333, 1594 }), Orb, 36, 36)
 
-	objs(({ 12, 13, 47, 111 , 660 }), VehiclePortal, 34, 86)
+	objs(({ 12, 13, 47, 111 , 660, 745 }), VehiclePortal, 34, 86)
 	objs(({ 10, 11 }), GravityPortal, 25, 75)
 	objs(({ 286, 287 }), DualPortal, 41, 91)
 
@@ -240,7 +240,7 @@ bool Object::touching(Player const& player) const {
 	// Entity rotations here are counter-clockwise (objects: -GD's; the ship's, ufo's and wave's too), while
 	// the cube's and ball's is GD's own clockwise one (Player::updateRotation)
 	Entity oriented = player;
-	if (player.vehicle.type == VehicleType::Cube || player.vehicle.type == VehicleType::Ball)
+	if (player.cubeLike() || player.vehicle.type == VehicleType::Ball)
 		oriented.rotation = -oriented.rotation;
 	return orientedOverlaps(oriented);
 }

@@ -63,44 +63,27 @@ void rotateUfo(Player& p) {
 	}
 }
 
-Vehicle cube() {
-	Vehicle v;
-	 v.type = VehicleType::Cube;
-
-	v.enter = +[](Player& p, VehicleType from) {
-		// GD halves y velocity when the ship, ufo or wave mode is toggled off (or on)
-		if (from != VehicleType::Ball)
-			p.velocity = p.velocity / 2;
-
-		if (from == VehicleType::Ship && p.input)
-			p.buffer = true;
-	};
-
-	v.clamp = +[](Player& p) {
-		if (p.velocity < -810)
-			p.velocity = -810;
-
-		if (p.gravTop(p.innerHitbox()) >= p.gravCeiling())
-			p.dead = true;
-	};
-
-	v.update = +[](Player& p) {
+static void cubeLikeUpdate(Player& p, bool robot) {
 		p.acceleration = stepAcceleration(p);
 
 		bool jump = false;
 		// (a held jump from the on-ground flag player 1 kept at a solo portal: GD's updateJump, no step of gravity)
 		bool keptHeld = false;
 
+		// PlayerObject::updateJump: the robot only jumps on a press it hasn't jumped on yet (m_jumpBuffered, which the
+		// jump clears), not from a held button; the cube jumps whenever the button is held
+		bool canJump = !robot || p.jumpBuffered;
+
 		if (p.grounded) {
 			// (not when GD cleared the on-ground flag after the landing, e.g. a ufo portal off a slope: standing, it
 			// can't jump in GD's next step)
-			if (p.input && !p.groundCleared) {
+			if (p.input && canJump && !p.groundCleared) {
 				jump = !p.partnerFlipsNext;
 			} else {
 				p.setVelocity(0, true);
 			}
 			p.buffer = false;
-		} else if (p.keptGround && p.input && !p.clickedOrb) {
+		} else if (p.keptGround && p.input && canJump && !p.clickedOrb) {
 			jump = !p.partnerFlipsNext;
 			keptHeld = p.button && p.prevPlayer().button;
 			p.buffer = false;
@@ -108,7 +91,7 @@ Vehicle cube() {
 
 		// GD's on-ground flag outlives a walk-off until updateJump finds the cube falling (playerIsFallingBugged):
 		// faster than 2g, 9 steps, upside down or in dual mode (m_unkA99); otherwise at once
-		if ((p.upsideDown || p.dual) && p.input && p.coyoteFrames < 10) {
+		if ((p.upsideDown || p.dual) && p.input && canJump && p.coyoteFrames < 10) {
 			jump = true;
 			p.buffer = false;
 		}
@@ -126,7 +109,13 @@ Vehicle cube() {
 			p.keptGround = false;
 			p.beforeCubeJump = {p.boosted, p.clickUsed, p.buffer, p.onGround2, p.grounded,
 				Player::Spin {p.rotationSpeed, p.rotateSpeed, p.isRotating, p.ballRotating, p.ballRotating2}};
-			p.setVelocity(jumpHeights[p.speed], p.prevPlayer().input || keptHeld);
+			// (the robot's jump is half the cube's m_jumpAccel; it then holds it, see below)
+			p.setVelocity(jumpHeights[p.speed] * (robot ? 0.5 : 1), p.prevPlayer().input || keptHeld);
+			if (robot) {
+				p.jumpBuffered = false;
+				p.robotReleased = false;
+				p.robotBoost = 0;
+			}
 			p.grounded = false;
 			p.boosted = true;
 			p.clickUsed = true;
@@ -137,10 +126,58 @@ Vehicle cube() {
 			p.runNormalRotation();
 			p.onGround2 = false;
 		}
+		// While the button stays held after a jump (not released since), for 1.5 / 0.1 of GD's time (67 steps at 240
+		// tps), updateJump adds back the step's gravity: the robot keeps its jump velocity. (A fresh press jumps in
+		// pushButton, and the step's own updateJump already boosts; a jump from updateJump is that step's.)
+		if (robot && p.boosted && p.input && !p.robotReleased && p.robotBoost < 1.5 && !(jump && p.velocityOverride)) {
+			float gdDt = (float)(p.dt * 60) * 0.9f;
+			p.robotBoost += (double)(gdDt * 0.1f);
+			p.acceleration = 0;
+		}
+}
+
+Vehicle cube() {
+	Vehicle v;
+	 v.type = VehicleType::Cube;
+
+	v.enter = +[](Player& p, VehicleType from) {
+		// GD halves y velocity when the ship, ufo or wave mode is toggled off (or on); not off a ball or robot
+		if (from == VehicleType::Ship || from == VehicleType::Ufo || from == VehicleType::Wave)
+			p.velocity = p.velocity / 2;
+
+		if (from == VehicleType::Ship && p.input)
+			p.buffer = true;
 	};
+
+	v.clamp = +[](Player& p) {
+		if (p.velocity < -810)
+			p.velocity = -810;
+
+		if (p.gravTop(p.innerHitbox()) >= p.gravCeiling())
+			p.dead = true;
+	};
+
+	v.update = +[](Player& p) { cubeLikeUpdate(p, false); };
 
 	v.bounds = FLT_MAX;
 
+	return v;
+}
+
+Vehicle robot() {
+	Vehicle v = cube();
+	v.type = VehicleType::Robot;
+	v.enter = +[](Player& p, VehicleType from) {
+		// switchToRobotMode turns the other modes off (toggleFlyMode etc. halve the y velocity of a ship, ufo or
+		// wave); toggleRobotMode sets m_robotBoost (0x830) to 1.5, so no boost before its first jump, and the
+		// rotation to 0
+		if (from == VehicleType::Ship || from == VehicleType::Ufo || from == VehicleType::Wave)
+			p.velocity = p.velocity / 2;
+		p.robotBoost = 1.5;
+		p.rotation = 0;
+		p.stopRotation();
+	};
+	v.update = +[](Player& p) { cubeLikeUpdate(p, true); };
 	return v;
 }
 
@@ -488,7 +525,11 @@ Vehicle Vehicle::from(VehicleType v) {
 			return ufo();
 		case VehicleType::Wave:
 			return wave();
+		case VehicleType::Robot:
+			return robot();
 	}
+	// (spider, swing: not simulated yet, see Level's unsupported list)
+	return cube();
 }
 
 double stepAcceleration(Player const& p) {
@@ -497,6 +538,11 @@ double stepAcceleration(Player const& p) {
 			// m_gravity per speed (updateTimeMod)
 			static float const gravity[] = {0.940199f, 0.958199f, 0.957199f, 0.961199f, 0.961199f};
 			return gdFall(p, gravity[p.speed], 1);
+		}
+		// The robot falls with m_gravity times 0.9 (updateJump)
+		case VehicleType::Robot: {
+			static float const gravity[] = {0.940199f, 0.958199f, 0.957199f, 0.961199f, 0.961199f};
+			return gdFall(p, gravity[p.speed], 0.9f);
 		}
 		// A ball falls with GD's fixed 0.958199 (not m_gravity), times 0.6
 		case VehicleType::Ball: return gdFall(p, 0.958199f, 0.6f);

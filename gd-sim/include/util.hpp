@@ -34,7 +34,11 @@ template <typename ...Args>
 struct velocity_map : public std::unordered_map<std::tuple<Args...>, std::vector<double>, hash_tuple> {
     using std::unordered_map<std::tuple<Args...>, std::vector<double>, hash_tuple>::unordered_map;
     double get(Args... args, int sec) const {
-        return *(this->at(std::tuple(args...)).begin() + sec);
+        // (a combination the table lacks: no velocity rather than an exception that would take GD down)
+        auto it = this->find(std::tuple(args...));
+        if (it == this->end())
+            return 0;
+        return *(it->second.begin() + sec);
     }
 };
 

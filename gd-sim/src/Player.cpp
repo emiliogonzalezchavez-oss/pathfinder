@@ -34,7 +34,7 @@ void Player::applyResize() {
 }
 
 std::string Player::modeString() const {
-	std::string mode(1, "csbuw"[(int)vehicle.type]);
+	std::string mode(1, "csbuwr"[(int)vehicle.type]);
 	if (upsideDown) mode += 'u';
 	if (small) mode += 'm';
 	if (grounded) mode += 'g';
@@ -289,7 +289,7 @@ void Player::preCollision(bool pressed) {
 	ballJumped = false;
 	// (GD's on-ground flag lasts while the ball stays boosted: its updateJump only applies gravity)
 	ceilingGround = ceilingGround && boosted && vehicle.type == VehicleType::Ball;
-	keptGround = keptGround && (vehicle.type == VehicleType::Cube || vehicle.type == VehicleType::Ball) && !fallingBugged();
+	keptGround = keptGround && (cubeLike() || vehicle.type == VehicleType::Ball) && !fallingBugged();
 	dualCeilingPutBack = false;
 	ringPos.reset();
 	slopeRaised = false;
@@ -305,6 +305,9 @@ void Player::preCollision(bool pressed) {
 	if (button != pressed) {
 		button = pressed;
 		jumpBuffered = pressed;
+		// (releaseButton: the robot stops holding its jump)
+		if (!pressed)
+			robotReleased = true;
 		input = button;
 		buffer = button;
 		if (pressed)
@@ -349,7 +352,7 @@ void Player::preCollision(bool pressed) {
 		outOfBoundsStep();
 
 	// (not a launched cube, m_maybeIsBoosted: one that jumps below the floor, off a downhill slope, rises from there)
-	bool cubeBounds = vehicle.type == VehicleType::Cube && !upsideDown && !dual;
+	bool cubeBounds = cubeLike() && !upsideDown && !dual;
 	floorSnapped = gravBottom(*this) < gravFloor() && !(cubeBounds && boosted) && !pastBounds;
 	boundKeptVelocity = floorSnapped && dual && ceiling != prevPlayer().ceiling;
 	if (floorSnapped) {
@@ -362,14 +365,14 @@ void Player::preCollision(bool pressed) {
 		}
 		// For a cube on the ground (not in dual mode, where the mode bounds work like a flying mode's) that's
 		// hitGround, which stops it: a gravity portal touched in this step flips a stopped player
-		if (vehicle.type == VehicleType::Cube && !upsideDown && !dual && !boosted && velocity <= 270) {
+		if (cubeLike() && !upsideDown && !dual && !boosted && velocity <= 270) {
 			velocity = 0;
 			// (and its rotation part: the spin stops before a gravity portal in this step can flip it)
 			hitGroundRotation();
 		}
 		// In dual mode the bounds take a cube like a flying mode: hitGround on its floor, upside down only while moving
 		// into it (m_yVelocity > 0), which stops its spin even when a slope over its head then takes it off again
-		if (vehicle.type == VehicleType::Cube && dual && (!upsideDown || velocity < 0))
+		if (cubeLike() && dual && (!upsideDown || velocity < 0))
 			hitGroundRotation();
 		// A falling ship or ufo: hitGround stops it before the collisions (a slope it rides below the floor then
 		// clamps that, see Slope::collide)
@@ -384,7 +387,7 @@ void Player::preCollision(bool pressed) {
 	float shrink = small ? (1 - 0.6f) * (vehicle.type == VehicleType::Wave ? 20.0f : 30.0f) * 0.5f : 0;
 	if ((float)(pos.y + 90) > 2790.0f + shrink)
 		outOfBoundsStep();
-	if (vehicle.type == VehicleType::Cube && upsideDown && getBottom() < floor && !dual) {
+	if (cubeLike() && upsideDown && getBottom() < floor && !dual) {
 		if (lastFlipFrame <= 0 || !stepsWithin(frame - lastFlipFrame, 0.1)) {
 			outOfBoundsStep();
 			return;
@@ -403,7 +406,7 @@ void Player::preCollision(bool pressed) {
 	// In dual mode GJBaseGameLayer::checkCollisions bounds every mode like a flying one: a cube past the
 	// ceiling (relative to its gravity) is out of bounds, unless gravity or the mode changed within 0.2 s, which puts it
 	// back under it, stopped and off the ground
-	if (dual && vehicle.type == VehicleType::Cube && gravTop(*this) > gravCeiling() && !pastBounds) {
+	if (dual && cubeLike() && gravTop(*this) > gravCeiling() && !pastBounds) {
 		if (!changedWithin(0.2)) {
 			outOfBoundsStep();
 			return;
@@ -445,7 +448,7 @@ void Player::preCollision(bool pressed) {
 	}
 
 	// A flying player (or ball, or any player in dual mode) put onto the mode's floor or ceiling is off any slope
-	if ((floorSnapped || ceilingSnapped) && (vehicle.type != VehicleType::Cube || dual))
+	if ((floorSnapped || ceilingSnapped) && (!cubeLike() || dual))
 		slope.was = false;
 
 	// A player resting on the mode floor (the dual ceiling, for player 2 upside down) whose floor the other player's
@@ -472,7 +475,7 @@ void Player::preCollision(bool pressed) {
 		// That step comes before GD's floor snap: one that takes the player below the mode floor (a slope starting
 		// just above it) is put back, and a flying player or ball, or any player in dual mode, is off the slope for
 		// a step (m_wasOnSlope cleared: landing on it again restarts its launch ramp)
-		if (gravBottom(*this) < gravFloor() && (vehicle.type != VehicleType::Cube || dual)) {
+		if (gravBottom(*this) < gravFloor() && (!cubeLike() || dual)) {
 			pos.y = grav(gravFloor()) + grav(size.y / 2);
 			slope.was = false;
 			// (the snap's hitGround restarts a ball's roll, off the slope: at the plain speed)
@@ -716,7 +719,7 @@ void Player::slopeRotation() {
 	// updateSlopeRotation: any mode but the ball turns towards the slope's angle (the ship's, ufo's and wave's
 	// rotation is counter-clockwise in the sim, GD's clockwise)
 	float target = closestRotation((float)(slope.rotation * 57.295780181884766));
-	if (vehicle.type == VehicleType::Cube) {
+	if (cubeLike()) {
 		easeRotation(target);
 	} else if (vehicle.type != VehicleType::Ball) {
 		rotation = -rotation;
@@ -800,7 +803,7 @@ void Player::leaveSlope() {
 	double v = gdVelocity();
 	float sv = slope.velocity;
 	bool launches = (sv < 0 && sv < v && slope.ceiling) || (0 < sv && v < sv && !slope.ceiling);
-	bool flyOrBall = vehicle.type != VehicleType::Cube;
+	bool flyOrBall = !cubeLike();
 	if (std::getenv("PF_SLOPE"))
 		printf("LeaveDbg %d p2 %d v %.4f sv %.4f ceil %d down %d boosted %d launches %d b %.4f up %d\n", frame, isP2, v, sv, slope.ceiling, slope.downhill, boosted, launches, (float)((double)sv * slopeTimeFactor(*this, false)), upsideDown);
 	if ((!boosted || flyOrBall) && launches) {
@@ -895,7 +898,7 @@ void Player::postCollision() {
 		leaveSlope();
 
 	// Fell through ceiling, or hit floor
-	if ((upsideDown && getBottom() < floor && vehicle.type != VehicleType::Cube)) {
+	if ((upsideDown && getBottom() < floor && !cubeLike())) {
 		dead = true;
 		return;
 	}
@@ -915,7 +918,7 @@ void Player::postCollision() {
 
 	// An upside down cube (or any cube in dual mode) that just left a block can still jump (see cube update), but
 	// GD moves it off the block first
-	bool coyoteJump = vehicle.type == VehicleType::Cube && !grounded && (upsideDown || dual) && input && coyoteFrames < 10;
+	bool coyoteJump = cubeLike() && !grounded && (upsideDown || dual) && input && coyoteFrames < 10;
 	bool ufoJump = vehicle.type == VehicleType::Ufo && buffer;
 	bool groundedBefore = grounded;
 	bool boostedBefore = boosted;
@@ -959,7 +962,7 @@ void Player::postCollision() {
 		bool shipPress = vehicle.type == VehicleType::Ship && button && !prevPlayer().button && velocity == 0;
 		double shipFall = small ? -1051.8984 : -894.11464;
 		bool ballPress = vehicle.type == VehicleType::Ball && button && !prevPlayer().button && !onBlock && !clickedOrb && !slope.on;
-		if (!grounded && prevPlayer().grounded && ((!input && (prevPlayer().button || !button)) || buffer || (clickedOrb && !onBlock) || coyoteJump || shipPress || ballPress) && prevPlayer().gravBottom(*this) > prevPlayer().gravFloor() && prevPlayer().gravBottom(prevPlayer()) > prevPlayer().gravFloor() && prevPlayer().velocity == 0 && !((gravityPortal || modeFlip) && vehicle.type != VehicleType::Cube) && !dualCeilingPutBack) {
+		if (!grounded && prevPlayer().grounded && ((!input && (prevPlayer().button || !button)) || buffer || (clickedOrb && !onBlock) || coyoteJump || shipPress || ballPress) && prevPlayer().gravBottom(*this) > prevPlayer().gravFloor() && prevPlayer().gravBottom(prevPlayer()) > prevPlayer().gravFloor() && prevPlayer().velocity == 0 && !((gravityPortal || modeFlip) && !cubeLike()) && !dualCeilingPutBack) {
 			// The level's first frame has no previous acceleration. A ufo's previous acceleration was
 			// chosen for its velocity before landing; GD falls with the one for velocity 0 (this frame's).
 			double fallAccel = prevPlayer().acceleration;
@@ -1014,7 +1017,7 @@ void Player::postCollision() {
 			stopRotation();
 			runNormalRotation();
 		}
-		if ((vehicle.type == VehicleType::Cube || vehicle.type == VehicleType::Ball) && fall < -4 && fallingBugged())
+		if ((cubeLike() || vehicle.type == VehicleType::Ball) && fall < -4 && fallingBugged())
 			onGround2 = false;
 	}
 

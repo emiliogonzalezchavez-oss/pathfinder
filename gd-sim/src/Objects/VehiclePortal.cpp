@@ -19,6 +19,9 @@ VehiclePortal::VehiclePortal(Vec2D size, std::unordered_map<int, std::string>&& 
 		case 660:
 			type = VehicleType::Wave;
 			break;
+		case 745:
+			type = VehicleType::Robot;
+			break;
 		default:
 			type = VehicleType::Cube;
 			break;

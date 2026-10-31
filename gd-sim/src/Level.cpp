@@ -124,7 +124,7 @@ Level::Level(std::string const& lvlString) {
 					groupCenters[g] = {Vec2D((float)stod_def(obj[2], 0), ((float)stod_def(obj[3], 0) + 90.f) - 90.f), groups};
 		{
 			static std::unordered_map<int, char const*> const names = {
-				{745, "robot portal"}, {1331, "spider portal"}, {1933, "swing portal"},
+				{1331, "spider portal"}, {1933, "swing portal"},
 				{1704, "green dash orb"}, {1751, "pink dash orb"}, {3004, "spider orb"}, {3005, "spider pad"},
 {2902, "teleport portal"}, {2064, "teleport orb"},
 {1814, "follow player Y trigger"},
@@ -375,7 +375,7 @@ Player& Level::runFrame(bool pressed, float dt) {
 				// (player 1 after player 2's portal: the sim's velocity already has its next step's gravity, which
 				// for a cube in the air is the new speed's m_gravity)
 				// (a grounded one's next walk-off step falls with it too, see Player::preCollision)
-				if (changed && pl->vehicle.type == VehicleType::Cube) {
+				if (changed && pl->cubeLike()) {
 					pl->acceleration = stepAcceleration(*pl);
 					if (!pl->grounded && !pl->velocityOverride)
 						pl->velocity = std::max(-810.0, roundVel(pl->collisionVelocity + pl->acceleration * pl->dt, pl->upsideDown));

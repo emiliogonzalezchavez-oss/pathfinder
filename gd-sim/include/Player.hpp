@@ -282,6 +282,14 @@ struct Player : public Entity {
 	/// GD's m_jumpBuffered: set by a press, cleared by the release, a ball's jump or an orb (until the next press)
 	bool jumpBuffered = false;
 
+	/// The robot's hold: GD's 0x99c (set by a release, cleared by a jump) and 0x830, the jump's boost time so far
+	/// (updateJump boosts while it is below 1.5)
+	bool robotReleased = false;
+	double robotBoost = 1.5;
+
+	/// A cube or a robot: the same ground mode (bounds, landing, walk-off) apart from the jump and rotation
+	inline bool cubeLike() const { return vehicle.type == VehicleType::Cube || vehicle.type == VehicleType::Robot; }
+
 	/// A fresh click took an orb off the ground this frame (GD's step still has the player on the ground)
 	bool orbFromGround = false;
 
@@ -375,7 +383,7 @@ struct Player : public Entity {
 	/// mode's bounds once its centre is past the floor or ceiling (a flying mode or ball, or any mode in dual): it is
 	/// out of bounds
 	inline bool pastBoundsOnSlope(bool wasOnSlope) const {
-		return wasOnSlope && (vehicle.type != VehicleType::Cube || dual) && (pos.y < floor || ceiling < pos.y);
+		return wasOnSlope && (!cubeLike() || dual) && (pos.y < floor || ceiling < pos.y);
 	}
 
 	void setVelocity(double v, bool override=false);
