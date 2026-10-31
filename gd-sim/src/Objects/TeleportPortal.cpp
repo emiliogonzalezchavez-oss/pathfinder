@@ -26,7 +26,9 @@ void TeleportPortal::collide(Player& p) const {
 		return;
 	EffectObject::collide(p);
 	if (!target) {
-		p.pos.y += offset;
+		// GJBaseGameLayer::teleportPlayer (747): to the exit portal, the entry portal's y plus m_teleportYOffset (key 54),
+		// not the player's y plus it
+		p.pos.y = ((float)(pos.y + offset + 90.f)) - 90.f;
 		return;
 	}
 	// GJBaseGameLayer::teleportPlayer (default options): to the target object's position (moved with its groups)
