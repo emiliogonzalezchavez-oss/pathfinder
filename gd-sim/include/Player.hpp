@@ -289,6 +289,8 @@ struct Player : public Entity {
 	bool dashing = false;
 	/// Follow player Y triggers: how far each has moved its group so far (Level::followYTriggers order)
 	std::vector<float> followY;
+	/// m_gravityMod (gravity trigger): scales every mode's gravity
+	float gravityMod = 1;
 	double dashSlope = 0;
 	double robotBoost = 1.5;
 

@@ -131,7 +131,7 @@ Level::Level(std::string const& lvlString) {
 
 				{3016, "advanced follow trigger"}, {3006, "area move trigger"}, {3007, "area rotate trigger"},
 				{3008, "area scale trigger"}, {2067, "scale trigger"}, {1932, "player control trigger"},
-				{2066, "gravity trigger"}, {1935, "time warp trigger"}, {3022, "teleport trigger"},
+				{1935, "time warp trigger"}, 
 				
 				{1595, "touch trigger"}, {1812, "on death trigger"}, {2899, "options trigger"},
 			};
@@ -142,10 +142,10 @@ Level::Level(std::string const& lvlString) {
 			}
 		}
 		if (objId == 901 || objId == 1049 || objId == 1268 || objId == 1346 || objId == 1347 || objId == 1616
-			|| objId == 1817 || objId == 1611 || objId == 1811 || objId == 1814) {
+			|| objId == 1817 || objId == 1611 || objId == 1811 || objId == 1814 || objId == 2066 || objId == 3022) {
 			Trigger t;
 			t.kind = objId == 901 ? 0 : objId == 1049 ? 1 : objId == 1268 ? 2 : objId == 1346 ? 3 : objId == 1347 ? 4 : objId == 1616 ? 5
-				: objId == 1817 ? 6 : objId == 1611 ? 7 : objId == 1811 ? 8 : 9;
+				: objId == 1817 ? 6 : objId == 1611 ? 7 : objId == 1811 ? 8 : objId == 1814 ? 9 : objId == 2066 ? 10 : 11;
 			t.x = stod_def(obj[2], 0);
 			t.spawned = obj[62] == "1";
 			t.touched = obj[11] == "1" && !t.spawned;
@@ -176,6 +176,10 @@ Level::Level(std::string const& lvlString) {
 				t.lockRotation = obj[70] == "1";
 			} else if (t.kind == 1) {
 				t.on = obj[56] == "1";
+			} else if (t.kind == 10) {
+				t.gravity = (float)stod_def(obj[148], 1);
+				t.p1 = obj[138] == "1" || obj[200] != "1";
+				t.p2 = obj[200] == "1";
 			} else if (t.kind == 9) {
 				t.fySpeed = stod_def(obj[90], 0);
 				t.fyDelay = stod_def(obj[91], 0);
@@ -203,12 +207,16 @@ Level::Level(std::string const& lvlString) {
 			}
 			if (t.kind == 6)
 				pickupsByItem[t.item].push_back(index);
+			if (t.kind == 10)
+				gravityTriggers.push_back(index);
+			if (t.kind == 11)
+				teleportTriggers.push_back(index);
 			if (t.kind == 9) {
 				triggers.back().fyIndex = followYTriggers.size();
 				followYTriggers.push_back(index);
 				followYByGroup[t.target].push_back(index);
 			}
-			if (t.target && t.kind != 6 && t.kind != 9) {
+			if (t.target && t.kind != 6 && t.kind != 9 && t.kind != 10 && t.kind != 11) {
 				if (t.kind == 0) movesByGroup[t.target].push_back(index);
 				else if (t.kind == 3) rotatesByGroup[t.target].push_back(index);
 				else if (t.kind == 4) followsByGroup[t.target].push_back(index);
@@ -702,6 +710,25 @@ int Level::stepPlayer(Player& p, bool pressed, float dt) {
 
 	if (!p.isP2)
 		stepFollowY(p);
+	// Teleport trigger (default options): the player goes to its target group's object when it fires
+	for (int i : teleportTriggers) {
+		if (p.isP2 || triggerActivation(i) != p.frame)
+			continue;
+		auto c = groupCenters.find(triggers[i].target);
+		if (c == groupCenters.end())
+			continue;
+		Vec2D to = c->second.pos;
+		for (int g : c->second.groups) {
+			auto off = groupOffset(g, p.frame - 1);
+			to.x += off.x;
+			to.y += off.y;
+		}
+		if (to.x > p.pos.x)
+			p.pos.x = to.x;
+		p.pos.y = to.y;
+	}
+	if (!gravityTriggers.empty())
+		p.gravityMod = gravityModAt(p.frame + 1, p.isP2);
 
 	return numCollisions;
 }
@@ -900,4 +927,20 @@ void Level::stepFollowY(Player& p) {
 			dy = std::clamp(dy, -maxStep, maxStep);
 		p.followY[t.fyIndex] += dy;
 	}
+}
+
+float Level::gravityModAt(int frame, bool p2) const {
+	float mod = 1;
+	int last = -1;
+	for (int i : gravityTriggers) {
+		auto const& t = triggers[i];
+		if (p2 ? !t.p2 : !t.p1)
+			continue;
+		int a = triggerActivation(i);
+		if (a != INT_MAX && a < frame && a >= last) {
+			last = a;
+			mod = t.gravity;
+		}
+	}
+	return mod;
 }

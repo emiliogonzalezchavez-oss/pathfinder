@@ -12,6 +12,9 @@
 /// mini ship or ufo), with GD's dt 0.25f * 0.9f at 240 tps. As an acceleration in sim units (54x, per second).
 double gdFall(Player const& p, float gravity, float mult, float size) {
 	float dt = (float)(p.dt * 60) * 0.9f;
+	// (m_gravityMod from gravity triggers scales the gravity first, as a float)
+	if (p.gravityMod != 1)
+		gravity = gravity * p.gravityMod;
 	return -(double)(dt * gravity * mult / size) * 54.0 / p.dt;
 }
 
@@ -622,7 +625,7 @@ double stepAcceleration(Player const& p) {
 		// A ball (and the spider) falls with GD's fixed 0.958199 (not m_gravity), times 0.6
 		case VehicleType::Spider:
 		case VehicleType::Ball: return gdFall(p, 0.958199f, 0.6f);
-		case VehicleType::Ship: return shipAcceleration(p);
+		case VehicleType::Ship: return shipAcceleration(p) * p.gravityMod;
 		case VehicleType::Ufo: return ufoAcceleration(p);
 		// The swing falls towards its gravity with the flying modes' fixed 0.958199, times 0.4 (0.6 mini)
 		case VehicleType::Swing: return gdFall(p, 0.958199f, p.small ? 0.6f : 0.4f);
