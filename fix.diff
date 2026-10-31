@@ -1,6 +1,6 @@
 diff -ruN tobi/gd-sim/include/Level.hpp work/gd-sim/include/Level.hpp
 --- a/gd-sim/include/Level.hpp	2026-10-31 05:33:26.477514949 +0000
-+++ b/gd-sim/include/Level.hpp	2026-10-31 06:11:08.438105859 +0000
++++ b/gd-sim/include/Level.hpp	2026-10-31 07:22:06.813361648 +0000
 @@ -2,6 +2,8 @@
  #include <Object.hpp>
  #include <Player.hpp>
@@ -10,7 +10,7 @@ diff -ruN tobi/gd-sim/include/Level.hpp work/gd-sim/include/Level.hpp
  
  
  /**
-@@ -40,6 +42,50 @@
+@@ -40,6 +42,54 @@
  	/// Per-frame scratch lists for runFrame, kept here so they don't reallocate every frame
  	std::vector<ObjectContainer const*> blocks;
  	std::vector<ObjectContainer const*> hazards;
@@ -36,6 +36,10 @@ diff -ruN tobi/gd-sim/include/Level.hpp work/gd-sim/include/Level.hpp
 +		mutable int activation = INT_MAX;
 +	};
 +	std::vector<Trigger> triggers;
++	/// Gameplay objects the sim doesn't model (x, name), sorted by x: where the search is likely to get stuck
++	std::vector<std::pair<float, std::string>> unsupported;
++	/// The first unsupported object between x0 and x1, or nullptr
++	char const* unsupportedNear(float x0, float x1) const;
 +	std::unordered_map<int, std::vector<int>> movesByGroup, togglesByGroup, spawnersByGroup;
 +	/// Player 1's x at each frame (index = frame), filled as frames are simulated
 +	std::vector<double> xAtFrame;
@@ -77,24 +81,27 @@ diff -ruN tobi/gd-sim/include/Portals.hpp work/gd-sim/include/Portals.hpp
 +};
 diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 --- a/gd-sim/src/Level.cpp	2026-10-31 05:33:26.478061402 +0000
-+++ b/gd-sim/src/Level.cpp	2026-10-31 06:48:18.220995764 +0000
-@@ -4,6 +4,7 @@
++++ b/gd-sim/src/Level.cpp	2026-10-31 07:23:09.388373462 +0000
+@@ -4,6 +4,9 @@
  #include <Orb.hpp>
  #include <algorithm>
  #include <cstdlib>
 +#include <cmath>
++#include <unordered_set>
++#include <tuple>
  
  // Otherwise gameStates copies every Player (instead of moving) whenever it grows
  static_assert(std::is_nothrow_move_constructible_v<Player>);
-@@ -52,6 +53,7 @@
+@@ -52,6 +55,8 @@
  
  	// First player state
  	auto player = Player();
 +	std::vector<std::pair<ObjectContainer, std::vector<int>>> pending;
++	std::vector<std::tuple<float, char const*, int>> unsupportedPending;
  
  	while (std::getline(ss, objstr, ';')) {
  		// First entry is level settings object
-@@ -82,25 +84,107 @@
+@@ -82,26 +87,136 @@
  		if (obj.count(2))
  			length = std::max(length, (float)stod_def(obj[2], 0) + 40);
  
@@ -118,6 +125,24 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 +		}
 +
 +		int objId = atoi(obj[1].c_str());
++		{
++			static std::unordered_map<int, char const*> const names = {
++				{745, "robot portal"}, {1331, "spider portal"}, {1933, "swing portal"},
++				{1704, "green dash orb"}, {1751, "pink dash orb"}, {3004, "spider orb"}, {3005, "spider pad"},
++				{1594, "toggle orb"}, {2902, "teleport portal"}, {2064, "teleport orb"},
++				{1346, "rotate trigger"}, {1347, "follow trigger"}, {1814, "follow player Y trigger"},
++				{3016, "advanced follow trigger"}, {3006, "area move trigger"}, {3007, "area rotate trigger"},
++				{3008, "area scale trigger"}, {2067, "scale trigger"}, {1932, "player control trigger"},
++				{2066, "gravity trigger"}, {1935, "time warp trigger"}, {3022, "teleport trigger"},
++				{1811, "instant count trigger"}, {1817, "pickup trigger"}, {1611, "count trigger"},
++				{1595, "touch trigger"}, {1812, "on death trigger"}, {2899, "options trigger"},
++			};
++			if (auto it = names.find(objId); it != names.end() && obj.count(2)) {
++				// (triggers only matter when they target a group with gameplay objects: checked below)
++				int target = std::string(it->second).find("trigger") != std::string::npos ? atoi(obj[51].c_str()) : -1;
++				unsupportedPending.push_back({(float)stod_def(obj[2], 0), it->second, target});
++			}
++		}
 +		if (objId == 901 || objId == 1049 || objId == 1268) {
 +			Trigger t;
 +			t.kind = objId == 901 ? 0 : objId == 1049 ? 1 : 2;
@@ -180,7 +205,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
  			sections[sectionPos].push_back(ob);
 -
 +			continue;
-+		}
+ 		}
 +		DynamicSet* set = nullptr;
 +		for (auto& s : dynamicSets)
 +			if (s.moveGroups == moved && s.toggleGroups == toggled) { set = &s; break; }
@@ -195,16 +220,27 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
 +					set->reach += (std::abs(t.dx) + std::abs(t.dy)) * 1.7 + 30;
 +					if (t.lockX) set->reach += (t.duration / 240.0 + 0.1) * 1200 * std::abs(t.modX);
 +				}
- 		}
++		}
 +		set->objects.push_back(dynamicObjects.size());
 +		set->minX = std::min(set->minX, ob->pos.x);
 +		set->maxX = std::max(set->maxX, ob->pos.x);
 +		dynamicBase.push_back(ob->pos);
 +		dynamicObjects.push_back(ob);
++	}
++
++	{
++		std::unordered_set<int> gameplayGroups;
++		for (auto& [ob, groups] : pending)
++			gameplayGroups.insert(groups.begin(), groups.end());
++		for (auto& [x, name, target] : unsupportedPending)
++			if (target < 0 || gameplayGroups.count(target))
++				unsupported.push_back({x, name});
  	}
++	std::sort(unsupported.begin(), unsupported.end(), [](auto& a, auto& b) { return a.first < b.first; });
  
  	player.level = this;
-@@ -363,12 +447,32 @@
+ 	Player p2 = player;
+@@ -363,12 +478,32 @@
  	bool clicked = p.button && !p.prevPlayer().button;
  	std::vector<Orb const*> clickOrbs;
  
@@ -242,7 +278,7 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
  			if (o->prio == 1)
  				blocks.push_back(&o);
  			else if (o->prio == 2)
-@@ -383,8 +487,18 @@
+@@ -383,8 +518,18 @@
  				if (p.dead)
  					logDeath(p, *o.operator->());
  			}
@@ -261,6 +297,17 @@ diff -ruN tobi/gd-sim/src/Level.cpp work/gd-sim/src/Level.cpp
  
  	if (clickOrbs.size() > 1) {
  		auto firstTouched = [&](Orb const* orb) {
+@@ -480,3 +625,10 @@
+ Player& Level::latestState() {
+ 	return gameStates.back();
+ }
++
++char const* Level::unsupportedNear(float x0, float x1) const {
++	auto it = std::lower_bound(unsupported.begin(), unsupported.end(), x0, [](auto& a, float x) { return a.first < x; });
++	if (it != unsupported.end() && it->first <= x1)
++		return it->second.c_str();
++	return nullptr;
++}
 diff -ruN tobi/gd-sim/src/Objects/Object.cpp work/gd-sim/src/Objects/Object.cpp
 --- a/gd-sim/src/Objects/Object.cpp	2026-10-31 05:33:26.478351506 +0000
 +++ b/gd-sim/src/Objects/Object.cpp	2026-10-31 06:10:25.030382133 +0000
@@ -457,3 +504,239 @@ diff -ruN tobi/gd-sim/src/Triggers.cpp work/gd-sim/src/Triggers.cpp
 +		o->ySection = std::max(0, (int)((double)0.01f * (double)(o->pos.y + 90)));
 +	}
 +}
+diff -ruN tobi/src/cli.cpp work/src/cli.cpp
+--- a/src/cli.cpp	2026-10-31 05:33:26.480216728 +0000
++++ b/src/cli.cpp	2026-10-31 07:22:06.814779758 +0000
+@@ -89,8 +89,8 @@
+ 			  << ",\"seconds\":" << seconds
+ 			  << ",\"timedOut\":" << (stop ? "true" : "false")
+ 			  << ",\"seed\":" << seed
+-			  << ",\"simFrames\":" << stats.frames
+-			  << ",\"rounds\":" << stats.rounds
+-			  << ",\"deadEnds\":" << stats.deadEnds << "}" << std::endl;
++			  << ",\"simFrames\":" << stats.frames.load()
++			  << ",\"rounds\":" << stats.rounds.load()
++			  << ",\"deadEnds\":" << stats.deadEnds.load() << "}" << std::endl;
+ 	return 0;
+ }
+diff -ruN tobi/src/main.cpp work/src/main.cpp
+--- a/src/main.cpp	2026-10-31 05:33:26.480216728 +0000
++++ b/src/main.cpp	2026-10-31 07:23:57.052833396 +0000
+@@ -15,6 +15,79 @@
+     std::atomic<double> m_progress = 0;
+     std::future<std::vector<uint8_t>> m_result;
+     std::string m_levelName;
++    PathfindStats m_stats;
++
++    // Live status: a bar for the furthest point, a spinner that only turns while the search is simulating
++    // (if it stops turning, the search thread is hung), and what it's doing / what's blocking it
++    CCLayerColor* m_barFill = nullptr;
++    CCSprite* m_spinner = nullptr;
++    CCLabelBMFont* m_status = nullptr;
++    CCLabelBMFont* m_note = nullptr;
++    uint64_t m_lastFrames = 0;
++    float m_lastBest = 0;
++    float m_sinceFrames = 0;   // seconds since the sim last ran a frame
++    float m_sinceBest = 0;     // seconds since the furthest point last moved
++    float m_elapsed = 0;
++    float m_rate = 0;          // sim frames per second (smoothed)
++    bool m_done = false;
++
++    void updateStatus(float dt) {
++        if (m_done)
++            return;
++        m_elapsed += dt;
++        uint64_t frames = m_stats.frames;
++        float best = m_stats.bestX;
++        float length = std::max(1.0f, (float)m_stats.length);
++
++        if (frames != m_lastFrames) {
++            float inst = (float)(frames - m_lastFrames) / std::max(dt, 0.001f);
++            m_rate = m_rate * 0.8f + inst * 0.2f;
++            m_lastFrames = frames;
++            m_sinceFrames = 0;
++            if (m_spinner)
++                m_spinner->setRotation(m_spinner->getRotation() + 360 * dt);
++        } else {
++            m_sinceFrames += dt;
++        }
++        if (best > m_lastBest + 0.5f) {
++            m_lastBest = best;
++            m_sinceBest = 0;
++        } else {
++            m_sinceBest += dt;
++        }
++
++        float pct = std::clamp(best / length, 0.0f, 1.0f);
++        if (m_barFill)
++            m_barFill->setScaleX(pct);
++
++        int mins = (int)m_elapsed / 60, secs = (int)m_elapsed % 60;
++        int stuckSecs = (int)m_sinceBest;
++        std::string status;
++        ccColor3B color;
++        if (m_sinceFrames > 3) {
++            status = "NOT RESPONDING - the search thread stopped";
++            color = {255, 60, 60};
++        } else if (m_sinceBest > 90) {
++            status = fmt::format("Stuck: no progress for {}:{:02} ({} dead ends)", stuckSecs / 60, stuckSecs % 60,
++                m_stats.deadEnds.load());
++            color = {255, 170, 40};
++        } else {
++            status = fmt::format("Working - {:.1f}M frames/s - {}:{:02} - {} dead ends", m_rate / 1e6, mins, secs,
++                m_stats.deadEnds.load());
++            color = {120, 255, 120};
++        }
++        if (m_status) {
++            m_status->setString(status.c_str());
++            m_status->setColor(color);
++        }
++        if (m_note) {
++            char const* blocker = m_stats.blocker;
++            if (blocker && m_sinceBest > 20)
++                m_note->setString(fmt::format("Unsupported here: {}", blocker).c_str());
++            else
++                m_note->setString("");
++        }
++    }
+ public:
+     static PathfinderNode* create(std::string const& levelName, std::string const& lvlString) {
+         auto node = new PathfinderNode();
+@@ -33,6 +106,11 @@
+     }
+ 
+     void finalize(std::vector<uint8_t> macro) {
++        m_done = true;
++        if (m_status) {
++            m_status->setString("Done");
++            m_status->setColor({255, 255, 255});
++        }
+         getChildByIDRecursive("stop")->setVisible(false);
+  
+         auto callback = [this, macro](this auto self) -> arc::Future<void> {
+@@ -83,7 +161,7 @@
+             return pathfind(lvlString, m_stop, [this](double progress) {
+                 if (m_progress < progress)
+                     m_progress = progress;
+-            });
++            }, 0, &m_stats);
+             } catch (std::exception& e) {
+                 log::error("{}", e.what());
+                 return std::vector<uint8_t>();
+@@ -92,9 +170,10 @@
+ 
+         setKeypadEnabled(true);
+ 
+-        Build(this).initTouch().schedule([this](float) {
++        Build(this).initTouch().schedule([this](float dt) {
+                 Build(this).intoChildRecurseID<CCLabelBMFont>("percent")
+                     .string(fmt::format("{:.2f}%", m_progress).c_str());
++                updateStatus(dt);
+ 
+                 if (m_result.valid() && m_result.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                     finalize(m_result.get());
+@@ -112,24 +191,55 @@
+ 
+         auto menu = Build<CCMenu>::create().parent(this).id("menu").children(
+             Build<CCScale9Sprite>::create("GJ_square02.png")
+-                .contentSize(250, 140),
++                .contentSize(300, 190),
+             Build<CCLabelBMFont>::create("Pathfinding...", "bigFont.fnt")
+-                .move(0, 50)
++                .move(0, 70)
+                 .scale(0.8),
+             Build<CCLabelBMFont>::create("0.00", "chatFont.fnt")
+                 .id("percent")
+-                .move(0, 10),
++                .move(0, 40),
+             Build<ButtonSprite>::create("Stop", "bigFont.fnt", "GJ_button_04.png")
+                 .scale(0.8)
+                 .intoMenuItem(handle)
+                 .id("stop")
+-                .move(0, -40),
++                .move(0, -65),
+             Build<CCSprite>::createSpriteName("GJ_closeBtn_001.png")
+                 .intoMenuItem(handle)
+                 .id("close")
+-                .move(-125, 70)
++                .move(-150, 95)
+                 .scale(0.8)
+-        );
++        ).collect();
++
++        // Progress bar (furthest point reached)
++        auto barBg = CCLayerColor::create({0, 0, 0, 150}, 220, 10);
++        barBg->setPosition({-110, 18});
++        menu->addChild(barBg);
++        m_barFill = CCLayerColor::create({90, 255, 90, 255}, 220, 10);
++        m_barFill->setAnchorPoint({0, 0});
++        m_barFill->ignoreAnchorPointForPosition(false);
++        m_barFill->setPosition({-110, 18});
++        m_barFill->setScaleX(0);
++        menu->addChild(m_barFill);
++
++        // Spinner: turns only while the sim is running frames
++        m_spinner = CCSprite::create("loadingCircle.png");
++        if (m_spinner) {
++            m_spinner->setScale(0.35f);
++            m_spinner->setPosition({125, 70});
++            m_spinner->setBlendFunc({GL_SRC_ALPHA, GL_ONE});
++            menu->addChild(m_spinner);
++        }
++
++        m_status = CCLabelBMFont::create("Starting...", "chatFont.fnt");
++        m_status->setScale(0.6f);
++        m_status->setPosition({0, -2});
++        menu->addChild(m_status);
++
++        m_note = CCLabelBMFont::create("", "chatFont.fnt");
++        m_note->setScale(0.6f);
++        m_note->setColor({255, 120, 120});
++        m_note->setPosition({0, -22});
++        menu->addChild(m_note);
+ 
+         /*    .intoNewChild(CCMenu::create())
+                 .id("menu")
+diff -ruN tobi/src/pathfinder.cpp work/src/pathfinder.cpp
+--- a/src/pathfinder.cpp	2026-10-31 05:33:26.480216728 +0000
++++ b/src/pathfinder.cpp	2026-10-31 07:22:06.814589485 +0000
+@@ -258,8 +258,14 @@
+ 			lvl.rollback(frame);
+ 		}
+ 
+-		if (stats)
++		if (stats) {
+ 			++stats->rounds;
++			stats->frames = lvl.framesRun;
++			stats->length = lvl.length;
++			float bx = std::max<float>(stats->bestX, lvl.latestState().pos.x);
++			stats->bestX = bx;
++			stats->blocker = lvl.unsupportedNear(bx - 150, bx + 450);
++		}
+ 		if (bestFrame == frame) {
+ 			fail += fail > 100 ? 55 : 5;
+ 			if (fail <= 1000) {
+diff -ruN tobi/src/pathfinder.hpp work/src/pathfinder.hpp
+--- a/src/pathfinder.hpp	2026-10-31 05:33:26.480216728 +0000
++++ b/src/pathfinder.hpp	2026-10-31 07:22:06.814398015 +0000
+@@ -6,12 +6,16 @@
+ 
+ /// Work counters of one search (pathfinder-cli prints them)
+ struct PathfindStats {
+-	/// Sim frames run (runFrame calls), the search's cost independent of machine load
+-	uint64_t frames = 0;
++	/// Sim frames run (runFrame calls), the search's cost independent of machine load. Updated live.
++	std::atomic<uint64_t> frames = 0;
+ 	/// Batches of candidates tried
+-	uint64_t rounds = 0;
++	std::atomic<uint64_t> rounds = 0;
+ 	/// Dead ends backed off from
+-	uint64_t deadEnds = 0;
++	std::atomic<uint64_t> deadEnds = 0;
++	/// Furthest x reached and the level's length
++	std::atomic<float> bestX = 0, length = 1;
++	/// Unsupported mechanic (static string) right around the furthest point, or nullptr
++	std::atomic<char const*> blocker = nullptr;
+ };
+ 
+ /// seed 0 = random
