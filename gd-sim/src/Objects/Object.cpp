@@ -139,7 +139,8 @@ std::optional<ObjectContainer> Object::create(std::unordered_map<int, std::strin
 	objs(({ 10, 11 }), GravityPortal, 25, 75)
 	objs(({ 286, 287 }), DualPortal, 41, 91)
 
-	objs(({ 747 }), TeleportPortal, 25, 75)
+	objs(({ 747, 2902 }), TeleportPortal, 25, 75)
+	objs(({ 3027 }), TeleportPortal, 36, 36)
 	// D block: while the player touches one, a wave slides along blocks and slopes instead of dying on them
 	objs(({ 1755 }), DBlock, 30, 30)
 	objs(({ 99, 101 }), SizePortal, 31, 90)
