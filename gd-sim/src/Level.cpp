@@ -47,6 +47,8 @@ void Level::initLevelSettings(std::string const& lvlSettings, Player& player) {
 	// verified in GD, a mini wave start rests on the ground at y 6 (sim), not 18
 	if (player.vehicle.type == VehicleType::Wave)
 		player.size = player.small ? Vec2D(6, 6) : Vec2D(10, 10);
+	if (player.vehicle.type == VehicleType::Spider)
+		player.size = Vec2D(27, 27) * (player.small ? 0.6 : 1);
 	// ...and moves (down) on its very first step, like any wave: GD isn't grounded at the start there
 	if (player.vehicle.type == VehicleType::Wave) {
 		player.grounded = false;
@@ -861,9 +863,11 @@ void Level::spiderJump(Player& p, bool wide) {
 		lo = p.floor;
 		hi = p.ceiling;
 	} else {
-		// (no ground shown: the screen, 320 high, which the sim doesn't track; centred on the player)
-		lo = std::max(0.f, py - 160);
-		hi = lo + 320;
+		// (no ground shown: getMinPortalY is the camera's (at least GD's ground), getMaxPortalY 270 (the mode's ground
+		// height) above it; the sim doesn't track the camera's y: the ground, or as low as keeps the player inside. Verified in GD near the ground: a
+		// spider jump with nothing above ends 270 up)
+		lo = std::max(p.floor, py + h - 270);
+		hi = lo + 270;
 	}
 
 	// Search rects: from 2 into the player on its head side to the bound
@@ -959,6 +963,8 @@ void Level::spiderJump(Player& p, bool wide) {
 	// setYVelocity(+-1): towards the new floor
 	p.velocity = -54;
 	p.grounded = false;
+	// (no walk-off step in the old gravity: it left where it stood)
+	p.walkedOff = true;
 	p.onGround2 = false;
 	p.input = false;
 }

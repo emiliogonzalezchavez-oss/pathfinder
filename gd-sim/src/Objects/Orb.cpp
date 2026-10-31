@@ -197,7 +197,12 @@ void Orb::collide(Player& p) const {
 			// PlayerObject::ringJump (type 43): the gravity the orb faces away from, then spiderTestJump
 			if (p.upsideDown != facingDown)
 				p.flipGravity(facingDown);
-			p.level->spiderJump(p);
+			// (a fresh click is GD's next step, pushButton: the teleport too; verified in GD)
+			if (p.button && !p.prevPlayer().button) {
+				p.spiderPending = true;
+				p.setVelocity(0, true);
+			} else
+				p.level->spiderJump(p);
 			return;
 		}
 

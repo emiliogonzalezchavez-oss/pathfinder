@@ -287,6 +287,8 @@ struct Player : public Entity {
 	bool robotReleased = false;
 	/// Dashing (a dash orb's startDashing until the button is let go): y moves tan(angle) times the x step, no gravity
 	bool dashing = false;
+	/// The spider's own jump, done at the start of the next step (GD's pushButton / updateJump there)
+	bool spiderPending = false;
 	/// Follow player Y triggers: how far each has moved its group so far (Level::followYTriggers order)
 	std::vector<float> followY;
 	/// m_gravityMod (gravity trigger): scales every mode's gravity

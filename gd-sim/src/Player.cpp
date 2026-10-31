@@ -27,6 +27,9 @@ void Player::applyResize() {
 		// From the base size, like GD's scale (0.6 or exactly 1), so mini and back doesn't drift in float
 		if (vehicle.type == VehicleType::Wave)
 			size = small ? Vec2D(6, 6) : Vec2D(10, 10);
+		else if (vehicle.type == VehicleType::Spider)
+			// (the spider's rect is 0.9 the size: verified in GD, it rests 13.5 above the ground and walks off a block 13.5 past its edge)
+			size = Vec2D(27, 27) * (small ? 0.6 : 1);
 		else
 			size = Vec2D(30, 30) * (small ? 0.6 : 1);
 		resizePending = false;
@@ -267,7 +270,18 @@ void Player::preCollision(bool pressed) {
 
 	// PlayerObject::update adds the step as a CCPoint, so it is rounded to a float first
 	pos.x += (float)(player_speeds[(int)speed] * dt);
-	moveY(grav(velocity));
+	if (spiderPending) {
+		spiderPending = false;
+		level->spiderJump(*this);
+		// (setYVelocity(-1) towards the new floor, then that step's gravity)
+		velocity = roundVel(velocity + stepAcceleration(*this) * dt, upsideDown);
+	}
+	// PlayerObject::update while dashing: y moves tan(angle) times the x step (a double, added as a float), not by
+	// m_yVelocity (0)
+	if (dashing)
+		pos.y = ((pos.y + 90.f) + (float)(dashSlope * (player_speeds[(int)speed] * dt))) - 90.f;
+	else
+		moveY(grav(velocity));
 
 	frame++;
 	timeElapsed += dt;
@@ -949,7 +963,7 @@ void Player::postCollision() {
 	// PlayerObject::update while dashing: m_yVelocity 0, the move tan(angle) times the x step (any mode, never doubled)
 	if (dashing) {
 		acceleration = 0;
-		velocity = dashSlope * player_speeds[speed] * (upsideDown ? -1 : 1);
+		velocity = 0;
 		velocityOverride = true;
 		grounded = false;
 	}

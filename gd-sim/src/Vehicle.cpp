@@ -188,6 +188,9 @@ Vehicle robot() {
 Vehicle spider() {
 	Vehicle v = cube();
 	v.type = VehicleType::Spider;
+	// (unlike the cube, the spider has the mode's ceiling 270 above its floor: verified in GD, a spider jump with nothing
+	// above lands upside down 270 up)
+	v.bounds = 270;
 	v.enter = +[](Player& p, VehicleType from) {
 		// switchToSpiderMode / toggleSpiderMode: the other modes off (a ship, ufo or wave halves the y velocity), the
 		// rotation to 0
@@ -203,11 +206,11 @@ Vehicle spider() {
 		// lets go of the button (m_isHolding) until the next press
 		bool held = p.grounded || (p.keptGround && !p.clickedOrb);
 		if (held && p.input && !p.groundCleared && !p.partnerFlipsNext) {
-			bool fresh = !p.prevPlayer().input;
-			p.level->spiderJump(p);
+			// (GD teleports at its next step: the sim's update is a step ahead, see Player::preCollision)
+			p.spiderPending = true;
 			p.input = false;
 			p.keptGround = false;
-			p.velocityOverride = !fresh;
+			p.setVelocity(0, true);
 		} else if (p.grounded) {
 			p.setVelocity(0, true);
 		}
