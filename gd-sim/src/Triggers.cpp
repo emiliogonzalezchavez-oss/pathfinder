@@ -74,10 +74,55 @@ double Level::xOfFrame(int frame) const {
 	return getState(frame).pos.x;
 }
 
+int Level::itemValue(int item, int frame) const {
+	auto it = pickupsByItem.find(item);
+	if (it == pickupsByItem.end())
+		return 0;
+	std::vector<std::pair<int, int>> fired;
+	for (int i : it->second) {
+		int a = triggerActivation(i);
+		if (a != INT_MAX && a < frame)
+			fired.push_back({a, i});
+	}
+	std::stable_sort(fired.begin(), fired.end());
+	int v = 0;
+	for (auto& [a, i] : fired)
+		v = triggers[i].overrideCount ? triggers[i].count : v + triggers[i].count;
+	return v;
+}
+
 int Level::triggerActivation(int index, int depth) const {
 	auto const& t = triggers[index];
 	if (depth > 16)
 		return INT_MAX;
+	if (t.kind == 7) {
+		// Count trigger: the first frame its item reaches the count (a pickup changed it to that)
+		auto it = pickupsByItem.find(t.item);
+		if (it == pickupsByItem.end())
+			return INT_MAX;
+		std::vector<int> frames;
+		for (int i : it->second) {
+			int a = triggerActivation(i, depth + 1);
+			if (a != INT_MAX)
+				frames.push_back(a);
+		}
+		std::sort(frames.begin(), frames.end());
+		for (int f : frames)
+			if (itemValue(t.item, f + 1) == t.count)
+				return f;
+		return INT_MAX;
+	}
+	if (t.kind == 8) {
+		// Instant count trigger: when it fires, only if its item compares (0 equal, 1 larger, 2 smaller) with the count
+		const_cast<Level*>(this)->triggers[index].kind = 0;
+		int a = triggerActivation(index, depth + 1);
+		const_cast<Level*>(this)->triggers[index].kind = 8;
+		if (a == INT_MAX)
+			return INT_MAX;
+		int v = itemValue(t.item, a + 1);
+		bool ok = t.compare == 1 ? v > t.count : t.compare == 2 ? v < t.count : v == t.count;
+		return ok ? a : INT_MAX;
+	}
 	int best = INT_MAX;
 	if (t.touched) {
 		if (stepTouches)

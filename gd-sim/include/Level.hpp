@@ -48,7 +48,7 @@ class Level {
 	/// passes theirs (or a spawn trigger's delay after it fired), which doesn't depend on the inputs, so the
 	/// sim records player 1's x per frame and works out every group's offset and on/off state from the frame alone.
 	struct Trigger {
-		int kind = 0; // 0 move, 1 toggle, 2 spawn, 3 rotate, 4 follow, 5 stop
+		int kind = 0; // 0 move, 1 toggle, 2 spawn, 3 rotate, 4 follow, 5 stop, 6 pickup, 7 count, 8 instant count
 		double x = 0;
 		bool spawned = false;
 		bool touched = false; // touch triggered: fires when the player touches it, not when passing its x
@@ -66,6 +66,8 @@ class Level {
 		int centerGroup = 0; // rotate: group of the object to rotate around (0: each object around itself)
 		bool lockRotation = false; // rotate: objects keep their own rotation
 		double modY = 1; // follow: y multiplier (modX is the x one)
+		int item = 0, count = 0, compare = 0; // pickup / count / instant count: item ID (80), count (77), comparison (88)
+		bool overrideCount = false; // pickup: set the item instead of adding (139)
 		mutable int activation = INT_MAX;
 	};
 	std::vector<Trigger> triggers;
@@ -78,6 +80,10 @@ class Level {
 	std::unordered_map<int, std::vector<int>> movesByGroup, togglesByGroup, spawnersByGroup, rotatesByGroup, followsByGroup;
 	/// Stop triggers (1616) by the group of triggers they stop
 	std::unordered_map<int, std::vector<int>> stopsByGroup;
+	/// Pickup triggers by item ID
+	std::unordered_map<int, std::vector<int>> pickupsByItem;
+	/// An item's value at the start of a frame (pickup triggers fired before it)
+	int itemValue(int item, int frame) const;
 	/// The first frame a stop trigger halted trigger `index` (activated at `a`), INT_MAX if none
 	int stopFrame(int index, int a) const;
 	/// The first object of each group (any object, decoration too): where rotate triggers turn around

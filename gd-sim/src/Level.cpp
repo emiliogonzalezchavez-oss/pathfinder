@@ -132,7 +132,7 @@ Level::Level(std::string const& lvlString) {
 				{3016, "advanced follow trigger"}, {3006, "area move trigger"}, {3007, "area rotate trigger"},
 				{3008, "area scale trigger"}, {2067, "scale trigger"}, {1932, "player control trigger"},
 				{2066, "gravity trigger"}, {1935, "time warp trigger"}, {3022, "teleport trigger"},
-				{1811, "instant count trigger"}, {1817, "pickup trigger"}, {1611, "count trigger"},
+				
 				{1595, "touch trigger"}, {1812, "on death trigger"}, {2899, "options trigger"},
 			};
 			if (auto it = names.find(objId); it != names.end() && obj.count(2)) {
@@ -141,9 +141,11 @@ Level::Level(std::string const& lvlString) {
 				unsupportedPending.push_back({(float)stod_def(obj[2], 0), it->second, target});
 			}
 		}
-		if (objId == 901 || objId == 1049 || objId == 1268 || objId == 1346 || objId == 1347 || objId == 1616) {
+		if (objId == 901 || objId == 1049 || objId == 1268 || objId == 1346 || objId == 1347 || objId == 1616
+			|| objId == 1817 || objId == 1611 || objId == 1811) {
 			Trigger t;
-			t.kind = objId == 901 ? 0 : objId == 1049 ? 1 : objId == 1268 ? 2 : objId == 1346 ? 3 : objId == 1347 ? 4 : 5;
+			t.kind = objId == 901 ? 0 : objId == 1049 ? 1 : objId == 1268 ? 2 : objId == 1346 ? 3 : objId == 1347 ? 4 : objId == 1616 ? 5
+				: objId == 1817 ? 6 : objId == 1611 ? 7 : 8;
 			t.x = stod_def(obj[2], 0);
 			t.spawned = obj[62] == "1";
 			t.touched = obj[11] == "1" && !t.spawned;
@@ -174,6 +176,12 @@ Level::Level(std::string const& lvlString) {
 				t.lockRotation = obj[70] == "1";
 			} else if (t.kind == 1) {
 				t.on = obj[56] == "1";
+			} else if (t.kind >= 6) {
+				t.item = atoi(obj[80].c_str());
+				t.count = atoi(obj[77].c_str());
+				t.compare = atoi(obj[88].c_str());
+				t.on = obj[56] == "1";
+				t.overrideCount = obj[139] == "1";
 			} else {
 				t.delay = stod_def(obj[63], 0);
 			}
@@ -187,11 +195,13 @@ Level::Level(std::string const& lvlString) {
 				c->id = objectCount++;
 				pending.push_back({c, groups});
 			}
-			if (t.target) {
+			if (t.kind == 6)
+				pickupsByItem[t.item].push_back(index);
+			if (t.target && t.kind != 6) {
 				if (t.kind == 0) movesByGroup[t.target].push_back(index);
 				else if (t.kind == 3) rotatesByGroup[t.target].push_back(index);
 				else if (t.kind == 4) followsByGroup[t.target].push_back(index);
-				else if (t.kind == 1) togglesByGroup[t.target].push_back(index);
+				else if (t.kind == 1 || t.kind == 7 || t.kind == 8) togglesByGroup[t.target].push_back(index);
 				else if (t.kind == 5) { if (obj[580].empty() || obj[580] == "0" || obj[580] == "1") stopsByGroup[t.target].push_back(index); }
 				else spawnersByGroup[t.target].push_back(index);
 			}
