@@ -3,6 +3,8 @@
 #include <Player.hpp>
 #include <cmath>
 #include <algorithm>
+#include <tuple>
+#include <vector>
 
 // cocos2d's CCEase* actions, as GD's move trigger easings (EasingType 1-18); `rate` is the trigger's easing rate
 static double bounceTime(double t) {
