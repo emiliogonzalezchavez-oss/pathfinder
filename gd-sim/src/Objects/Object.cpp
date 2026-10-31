@@ -216,8 +216,17 @@ bool Object::touching(Player const& player) const {
 		if (box.getTop() == getBottom() || box.getBottom() == getTop())
 			return false;
 	}
-	if (r == 0 || r == 90 || r == 180 || r == 270)
-		return intersects(player.unrotatedHitbox());
+	if (r == 0 || r == 90 || r == 180 || r == 270) {
+		// A box turned by a multiple of 90 is an axis-aligned rect (w and h swapped at 90 / 270), edges
+		// included like GD's CCRect::intersectsRect. Rotating its corners by 180 in float put a flipped pad's
+		// edge a hair off: verified in GD (Unity), a flipped pad under a player on the floor launches it on the
+		// first step, the rotated test only 3 steps later.
+		auto box = player.unrotatedHitbox();
+		bool quarter = r == 90 || r == 270;
+		float hw = std::abs(quarter ? size.y : size.x) / 2, hh = std::abs(quarter ? size.x : size.y) / 2;
+		return !(pos.x - hw > box.getRight() || box.getLeft() > pos.x + hw
+			|| pos.y - hh > box.getTop() || box.getBottom() > pos.y + hh);
+	}
 
 	// GJBaseGameLayer::collisionCheckObjects first tests the object's bounding rect (of its rotated box)
 	// against the player's unrotated rect, edges included, and only then the oriented boxes
