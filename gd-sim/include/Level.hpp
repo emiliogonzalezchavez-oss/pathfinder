@@ -48,7 +48,7 @@ class Level {
 	/// passes theirs (or a spawn trigger's delay after it fired), which doesn't depend on the inputs, so the
 	/// sim records player 1's x per frame and works out every group's offset and on/off state from the frame alone.
 	struct Trigger {
-		int kind = 0; // 0 move, 1 toggle, 2 spawn, 3 rotate, 4 follow, 5 stop, 6 pickup, 7 count, 8 instant count, 9 follow player Y, 10 gravity, 11 teleport
+		int kind = 0; // 0 move, 1 toggle, 2 spawn, 3 rotate, 4 follow, 5 stop, 6 pickup, 7 count, 8 instant count, 9 follow player Y, 10 gravity, 11 teleport, 12 touch, 13 time warp
 		double x = 0;
 		bool spawned = false;
 		bool touched = false; // touch triggered: fires when the player touches it, not when passing its x
@@ -71,6 +71,8 @@ class Level {
 		double fySpeed = 0, fyDelay = 0, fyMaxSpeed = 0; int fyOffset = 0; // follow player Y: 90, 91, 105, 92
 		int fyIndex = -1; // follow player Y: slot in Player::followY
 		float gravity = 1; bool p1 = true, p2 = false; // gravity trigger: m_gravityValue (148), target players (138, 200)
+		bool touchHold = false; int touchMode = 0; // touch trigger: m_touchHoldMode (81), m_touchToggleMode (82: 0 flip, 1 on, 2 off)
+		float timeWarp = 1; // time warp trigger: m_timeWarpTimeMod (120)
 		mutable int activation = INT_MAX;
 	};
 	std::vector<Trigger> triggers;
@@ -89,7 +91,11 @@ class Level {
 	/// GJBaseGameLayer::processPlayerFollowActions for this step (player 1, after its collisions)
 	void stepFollowY(Player& p);
 	/// Gravity triggers in level order; m_gravityMod for a player as of a frame
-	std::vector<int> gravityTriggers, teleportTriggers;
+	std::vector<int> gravityTriggers, teleportTriggers, touchTriggers, timeWarpTriggers;
+	/// Groups a touch trigger turns on or off
+	std::unordered_map<int, bool> touchGroups;
+	/// GJBaseGameLayer::update's step for a time warp below 1: a step is that much shorter (more steps per second)
+	float timeWarpAt(int frame) const;
 	float gravityModAt(int frame, bool p2) const;
 	/// Pickup triggers by item ID
 	std::unordered_map<int, std::vector<int>> pickupsByItem;

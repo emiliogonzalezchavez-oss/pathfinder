@@ -131,9 +131,9 @@ Level::Level(std::string const& lvlString) {
 
 				{3016, "advanced follow trigger"}, {3006, "area move trigger"}, {3007, "area rotate trigger"},
 				{3008, "area scale trigger"}, {2067, "scale trigger"}, {1932, "player control trigger"},
-				{1935, "time warp trigger"}, 
 				
-				{1595, "touch trigger"}, {1812, "on death trigger"}, {2899, "options trigger"},
+				
+				{1812, "on death trigger"}, {2899, "options trigger"},
 			};
 			if (auto it = names.find(objId); it != names.end() && obj.count(2)) {
 				// (triggers only matter when they target a group with gameplay objects: checked below)
@@ -142,10 +142,10 @@ Level::Level(std::string const& lvlString) {
 			}
 		}
 		if (objId == 901 || objId == 1049 || objId == 1268 || objId == 1346 || objId == 1347 || objId == 1616
-			|| objId == 1817 || objId == 1611 || objId == 1811 || objId == 1814 || objId == 2066 || objId == 3022) {
+			|| objId == 1817 || objId == 1611 || objId == 1811 || objId == 1814 || objId == 2066 || objId == 3022 || objId == 1595 || objId == 1935) {
 			Trigger t;
 			t.kind = objId == 901 ? 0 : objId == 1049 ? 1 : objId == 1268 ? 2 : objId == 1346 ? 3 : objId == 1347 ? 4 : objId == 1616 ? 5
-				: objId == 1817 ? 6 : objId == 1611 ? 7 : objId == 1811 ? 8 : objId == 1814 ? 9 : objId == 2066 ? 10 : 11;
+				: objId == 1817 ? 6 : objId == 1611 ? 7 : objId == 1811 ? 8 : objId == 1814 ? 9 : objId == 2066 ? 10 : objId == 3022 ? 11 : objId == 1595 ? 12 : 13;
 			t.x = stod_def(obj[2], 0);
 			t.spawned = obj[62] == "1";
 			t.touched = obj[11] == "1" && !t.spawned;
@@ -176,6 +176,11 @@ Level::Level(std::string const& lvlString) {
 				t.lockRotation = obj[70] == "1";
 			} else if (t.kind == 1) {
 				t.on = obj[56] == "1";
+			} else if (t.kind == 12) {
+				t.touchHold = obj[81] == "1";
+				t.touchMode = atoi(obj[82].c_str());
+			} else if (t.kind == 13) {
+				t.timeWarp = std::clamp((float)stod_def(obj[120], 1), 0.1f, 2.f);
 			} else if (t.kind == 10) {
 				t.gravity = (float)stod_def(obj[148], 1);
 				t.p1 = obj[138] == "1" || obj[200] != "1";
@@ -211,12 +216,18 @@ Level::Level(std::string const& lvlString) {
 				gravityTriggers.push_back(index);
 			if (t.kind == 11)
 				teleportTriggers.push_back(index);
+			if (t.kind == 12) {
+				touchTriggers.push_back(index);
+				touchGroups[t.target] = true;
+			}
+			if (t.kind == 13)
+				timeWarpTriggers.push_back(index);
 			if (t.kind == 9) {
 				triggers.back().fyIndex = followYTriggers.size();
 				followYTriggers.push_back(index);
 				followYByGroup[t.target].push_back(index);
 			}
-			if (t.target && t.kind != 6 && t.kind != 9 && t.kind != 10 && t.kind != 11) {
+			if (t.target && t.kind != 6 && t.kind != 9 && t.kind != 10 && t.kind != 11 && t.kind != 12 && t.kind != 13) {
 				if (t.kind == 0) movesByGroup[t.target].push_back(index);
 				else if (t.kind == 3) rotatesByGroup[t.target].push_back(index);
 				else if (t.kind == 4) followsByGroup[t.target].push_back(index);
@@ -245,7 +256,7 @@ Level::Level(std::string const& lvlString) {
 		std::vector<int> moved, toggled, rotated;
 		for (int g : groups) {
 			if (movesByGroup.count(g) || followsByGroup.count(g) || followYByGroup.count(g)) moved.push_back(g);
-			if (togglesByGroup.count(g) || orbToggleGroups.count(g)) toggled.push_back(g);
+			if (togglesByGroup.count(g) || orbToggleGroups.count(g) || touchGroups.count(g)) toggled.push_back(g);
 			if (rotatesByGroup.count(g)) rotated.push_back(g);
 		}
 		if (moved.empty() && toggled.empty() && rotated.empty()) {
@@ -366,6 +377,8 @@ Player& Level::runFrame(bool pressed, float dt) {
 			pl->flipPartner(false);
 		}
 	}
+	if (!timeWarpTriggers.empty())
+		dt = dt * std::min(1.f, timeWarpAt(p.frame + 1));
 	int collisions = stepPlayer(p, pressed, dt);
 	if (wasDual && p.dual && !p.dead) {
 		// (not once player 1 died: GD stops the step there)
@@ -710,6 +723,25 @@ int Level::stepPlayer(Player& p, bool pressed, float dt) {
 
 	if (!p.isP2)
 		stepFollowY(p);
+	// Touch triggers that have fired: a press turns the target group on, off or the other way (hold mode: the release
+	// undoes it)
+	if (!p.isP2 && !touchTriggers.empty() && p.button != p.prevPlayer().button) {
+		for (int i : touchTriggers) {
+			auto const& t = triggers[i];
+			int a = triggerActivation(i);
+			if (a == INT_MAX || a >= p.frame)
+				continue;
+			if (!p.button && !t.touchHold)
+				continue;
+			bool on;
+			if (t.touchMode == 1) on = p.button;
+			else if (t.touchMode == 2) on = !p.button;
+			else on = !groupEnabled(t.target, p.frame + 1);
+			if (!p.button && t.touchMode == 0)
+				on = !groupEnabled(t.target, p.frame + 1);
+			p.toggleEvents.push_back({p.frame, on ? t.target : -t.target});
+		}
+	}
 	// Teleport trigger (default options): the player goes to its target group's object when it fires
 	for (int i : teleportTriggers) {
 		if (p.isP2 || triggerActivation(i) != p.frame)
@@ -943,4 +975,17 @@ float Level::gravityModAt(int frame, bool p2) const {
 		}
 	}
 	return mod;
+}
+
+float Level::timeWarpAt(int frame) const {
+	float warp = 1;
+	int last = -1;
+	for (int i : timeWarpTriggers) {
+		int a = triggerActivation(i);
+		if (a != INT_MAX && a < frame && a >= last) {
+			last = a;
+			warp = triggers[i].timeWarp;
+		}
+	}
+	return warp;
 }
